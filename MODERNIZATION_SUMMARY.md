@@ -114,8 +114,8 @@ size: Standard_D4s_v5  # New 5th generation
 ### 4. Terraform Modernization
 
 #### What Changed
-- Updated Terraform required version from `>= 1.6.0` to `>= 1.9.0`
-- Updated azurerm provider from `2.99.0` (2021) to `~> 4.11` (November 2025 - latest)
+- Updated Terraform required version from `>= 1.6.0` to `>= 1.10.0`
+- Updated azurerm provider from `2.99.0` (2021) to `~> 4.52.0` (November 2025 - latest)
 - Added OIDC authentication support (`use_oidc = true`)
 - Removed `client_secret` variable (no longer needed with OIDC)
 - Modernized Key Vault to use RBAC instead of deprecated access policies
@@ -151,15 +151,15 @@ provider "azurerm" {
 #### After:
 ```terraform
 terraform {
-  required_version = ">= 1.9.0"
+  required_version = ">= 1.10.0"
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.11"
+      version = "~> 4.52.0"
     }
     random = {
       source  = "hashicorp/random"
-      version = "~> 3.6"
+      version = "~> 3.7.2"
     }
   }
 }
@@ -392,8 +392,8 @@ Delete these secrets from your repository:
 | azure/login | v1 | v2 | ✅ Complete |
 | Authentication | Service Principal | OIDC | ✅ Complete |
 | **Infrastructure** | | | |
-| Terraform | >= 1.6.0 | >= 1.9.0 | ✅ Complete |
-| azurerm Provider | 2.99.0 (2021) | ~> 4.11 (2025) | ✅ Complete |
+| Terraform | >= 1.6.0 | >= 1.10.0 | ✅ Complete |
+| azurerm Provider | 2.99.0 (2021) | ~> 4.52.0 (2025) | ✅ Complete |
 | Compute SKU | Standard_DS3_v2 | Standard_D4s_v5 | ✅ Complete |
 | Key Vault Auth | Access Policies | RBAC | ✅ Complete |
 | ACR SKU | Standard | Premium | ✅ Complete |
