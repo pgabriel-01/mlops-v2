@@ -9,7 +9,7 @@ This document will guide you through using the MLOps V2 project generator to dep
 - Ability to create Azure service principals to access / create Azure resources from Azure DevOps
 - If using Terraform to create and manage infrastructure from Azure DevOps:
   - Install the [Terraform extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=ms-devlabs.custom-terraform-tasks)
-  - **This modernized version requires Terraform v1.9.0 or higher** with azurerm provider ~> 4.11
+  - **This modernized version requires Terraform v1.10.0 or higher** with azurerm provider ~> 4.52.0
 - **Python 3.11 or higher** for local development and testing
 
 
