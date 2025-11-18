@@ -269,14 +269,60 @@
 
    These permissions (Storage Blob Data Reader and Storage Blob Data Contributor) will be automatically assigned to the Azure ML workspace storage account during infrastructure deployment.
 
-   **Important - Azure ML Workspace Soft-Delete**: Azure ML workspaces are retained for 30 days after deletion. If you need to redeploy an environment with the same namespace:
-   - Use a different **postfix** value (e.g., change from "10005" to "10006")
-   - OR manually purge the soft-deleted workspace: `az ml workspace delete --name <workspace-name> --resource-group <rg-name> --permanently-delete`
-   - OR wait 30 days for automatic purge
+   **For Bicep**: Role assignments are handled differently - see the Bicep templates for specific implementation details.
 
-   If you are running a Deep Learning workload such as CV or NLP, ensure your subscription and Azure location has available GPU compute. 
-   
-   > Note:
+   > **Best Practice**: Using OIDC (OpenID Connect) federation instead of client secrets provides better security by eliminating the need to manage and rotate secrets. The service principal authenticates using short-lived tokens issued by GitHub, which reduces the risk of credential exposure.
+
+   > **Alternative**: If your organization doesn't allow OIDC, you can use a client secret instead. However, this requires storing and managing secrets, which increases security risks. See [GitHub's documentation on secrets](https://docs.github.com/en/actions/security-guides/encrypted-secrets) for more information.
+
+   > **Note**: The `github_actions_service_principal_id` must be the **object ID**, not the application ID. You can retrieve it using:
+   > ```bash
+   > az ad sp show --id <APPLICATION_ID> --query id -o tsv
+   > ```
+
+2.1. **(Optional) Configure Virtual Network and Private Endpoints**
+
+   The infrastructure supports optional network isolation using Azure Virtual Networks and Private Endpoints for enhanced security. By default, this feature is disabled (`enable_private_endpoints = false`) to maintain backward compatibility and simplify initial deployments.
+
+   **When to Enable VNet and Private Endpoints:**
+   - Production environments requiring network isolation
+   - Compliance requirements mandating private connectivity
+   - Sensitive data workloads requiring additional security
+
+   **To enable network isolation**, add the following to your `infrastructure/terraform/terraform.tfvars`:
+
+   ```hcl
+   # Enable VNet and private endpoints for network isolation
+   enable_private_endpoints = true
+
+   # Customize VNet address space if needed (optional)
+   vnet_address_space               = "10.0.0.0/16"      # Default
+   training_subnet_address_prefix   = "10.0.0.0/24"     # For compute (254 hosts)
+   endpoints_subnet_address_prefix  = "10.0.1.0/24"     # For endpoints (254 hosts)
+   ```
+
+   **What gets deployed when enabled:**
+   - Virtual Network with two subnets (training and endpoints)
+   - Network Security Group with Azure ML required rules
+   - Private endpoints for: ML Workspace, Storage (blob/file/dfs), Key Vault, Container Registry
+   - Private DNS zones for name resolution within the VNet
+
+   **Impact:**
+   - All Azure ML resources communicate through private IPs
+   - Public network access restricted on storage, Key Vault, and Container Registry
+   - Deployment time increases by ~5 minutes
+   - Additional cost: ~$51/month for private endpoints
+
+   **For detailed information**, see the comprehensive [VNet Implementation Guide](https://github.com/Azure/mlops-project-template/blob/main/infrastructure/terraform/VNET_IMPLEMENTATION.md) which includes:
+   - Architecture diagrams and network topology
+   - Security configuration details
+   - IP address planning guidelines
+   - Testing and troubleshooting procedures
+   - Cost considerations
+
+   > **Note**: For initial evaluation and development environments, you can leave `enable_private_endpoints = false` (default). The infrastructure will deploy with public network access, which simplifies setup and reduces costs. You can always enable private endpoints later when moving to production.
+
+3. **Deploy Azure Machine Learning Infrastructure**   > Note:
    >
    > The enable_monitoring flag in these files defaults to False. Enabling this flag will add additional elements to the deployment to support Azure ML monitoring based on https://github.com/microsoft/AzureML-Observability. This will include an ADX cluster and increase the deployment time and cost of the MLOps solution.
    
