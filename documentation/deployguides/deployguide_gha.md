@@ -477,11 +477,11 @@ When you need to tear down a development or production environment:
    gh workflow run tf-gha-deploy-infra.yml --ref main -f action=destroy
    ```
 
-3. **Monitor the workflow**: The destroy process takes approximately 7-10 minutes and includes:
+3. **Monitor the workflow**: The destroy process takes approximately 9-12 minutes and includes:
    - Detection of workspace existence
    - Automatic deletion of all online endpoints
    - Automatic deletion of all batch endpoints
-   - 60-second wait for endpoint deletions to process
+   - 2-minute wait for endpoint deletions to process (online endpoints can take 2-3 minutes)
    - Terraform infrastructure destroy
    - Automatic cleanup of Terraform state storage
 
