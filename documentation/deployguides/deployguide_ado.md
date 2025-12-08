@@ -7,7 +7,10 @@ This document will guide you through using the MLOps V2 project generator to dep
      - **Important:** - As mentioned in the **Prerequisites** at the beginning [here](https://github.com/Azure/mlops-v2?tab=readme-ov-file#prerequisites), if you plan to use either a Free/Trial or similar learning purpose subscriptions, they might pose 'Usage + quotas' limitations in the default Azure region being used for deployment. Please read provided instructions carefully to succeessfully execute this deployment.
 - An Azure DevOps organization
 - Ability to create Azure service principals to access / create Azure resources from Azure DevOps
-- If using Terraform to create and manage infrastructure from Azure DevOps, install the [Terraform extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=ms-devlabs.custom-terraform-tasks).
+- If using Terraform to create and manage infrastructure from Azure DevOps:
+  - Install the [Terraform extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=ms-devlabs.custom-terraform-tasks)
+  - **This modernized version requires Terraform v1.10.0 or higher** with azurerm provider ~> 4.52.0
+- **Python 3.11 or higher** for local development and testing
 
 
 # Steps to Deploy
@@ -235,7 +238,11 @@ In this step, you will run an Azure DevOps pipeline, `initialise-project`, that 
 ### Create and Configure Service Principals and Connections
 ---
 
-For Azure DevOps pipelines to create Azure Machine Learning infrastructure and deploy and execute Azure ML pipelines, it is necessary to create an Azure service principal for each Azure ML environment (Dev and/or Prod) and configure Azure DevOps service connections using those service principals. These service princiapls can be created using one of the two methods below:
+For Azure DevOps pipelines to create Azure Machine Learning infrastructure and deploy and execute Azure ML pipelines, it is necessary to create an Azure service principal for each Azure ML environment (Dev and/or Prod) and configure Azure DevOps service connections using those service principals.
+
+> **🔐 Security Best Practice**: Azure DevOps now supports **workload identity federation** as a more secure alternative to service principal secrets. Workload identity federation uses OpenID Connect (OIDC) to establish trust without storing long-lived secrets. For production deployments, consider using workload identity federation instead of the service principal methods described below. See [Microsoft's documentation](https://learn.microsoft.com/en-us/azure/devops/pipelines/library/connect-to-azure#create-an-azure-resource-manager-service-connection-using-workload-identity-federation) for setup instructions.
+
+These service principals can be created using one of the two methods below:
 
 <details>
 <summary>Create Service Principal from Azure Cloud Shell</summary>
@@ -390,10 +397,10 @@ To do this, go back to **Repos** and your ML project repo, in this example, `tax
 
 >**Important:**
 >> Note that `config-infra-prod.yml` and `config-infra-dev.yml` files use default region as **eastus** to deploy resource group and Azure ML Workspace. If you are using Free/Trial or similar learning purpose subscriptions, you must do one of the below  -
-> 1. If you decide to use **eastus** region, ensure that your subscription(s) have a quota/limit of up to 20 vCPUs for **Standard DSv2 Family vCPUs**. Visit Subscription page in Azure Portal as show below to validate this.
+> 1. If you decide to use **eastus** region, ensure that your subscription(s) have a quota/limit of up to 20 vCPUs for **Standard Dsv5 Family vCPUs** (or **Standard DSv2 Family vCPUs** for older deployments). Visit Subscription page in Azure Portal as shown below to validate this.
         ![alt text](images/susbcriptionQuota.png)
-> 2. If not, you should change it to a region where **Standard DSv2 Family vCPUs** has a quota/limit of up to 20 vCPUs.
-> 3. You may also choose to change the region and compute type being used for deployment. To do this you have to change region in these two files, and additionally search for **STANDARD_DS3_V2** in below listed DevOps pipeline files and change this with a compute type that would work for your setup.
+> 2. If not, you should change it to a region where **Standard Dsv5 Family vCPUs** has a quota/limit of up to 20 vCPUs.
+> 3. You may also choose to change the region and compute type being used for deployment. The default compute is now **STANDARD_D4S_V5** (5th generation, improved performance). To change this, search for **STANDARD_D4S_V5** in the following DevOps pipeline files and change to a compute type that works for your setup:
 >      * `mlops-templates/aml-cli-v2/mlops/devops-pipelines/deploy-model-training-pipeline.yml`
 >      * `mlops-project-template/classical/aml-cli-v2/mlops/devops-pipelines/deploy-batch-endpoint-pipeline.yml`
 >      * `/mlops-project-template/classical/aml-cli-v2/mlops/azureml/deploy/online/online-deployment.yml`
@@ -483,7 +490,7 @@ If you want to create a **compute instance without a managed identity** referenc
     - template: templates/python-sdk-v2/create-compute-instance.yml@mlops-templates
       parameters:
         instance_name: compute-instance-a
-        size: Standard_DS3_v2
+        size: Standard_D4s_v5
         location: canadacentral
         description: compute instance a
    ```
@@ -494,7 +501,7 @@ In order to **create a system-assigned managed identity** and assign it your com
     - template: templates/python-sdk-v2/create-compute-instance.yml@mlops-templates
       parameters:
         instance_name: compute-instance-a
-        size: Standard_DS3_v2
+        size: Standard_D4s_v5
         location: canadacentral
         description: compute instance a
         identity_type: SystemAssigned
@@ -506,7 +513,7 @@ Lastly, to leverage a **user-assigned managed identity** for your compute, the f
     - template: templates/python-sdk-v2/create-compute-instance.yml@mlops-templates
       parameters:
         instance_name: compute-instance-a
-        size: Standard_DS3_v2
+        size: Standard_D4s_v5
         location: canadacentral
         description: compute instance a
         identity_type: UserAssigned
