@@ -41,12 +41,6 @@ else
   echo "Warning: data directory not found"
 fi
 
-if [[ "$mlops_version" == "python-sdk-v1" ]]
-then
-  echo "mlops_version=python-sdk-v1"
-  mv $project_type/$mlops_version/config-aml.yml config-aml.yml
-fi
-rm -rf $project_type
 
 mv infrastructure/$infrastructure_version $infrastructure_version
 rm -rf infrastructure
@@ -72,11 +66,15 @@ then
 fi
 
 # Upload to custom repo in Github
+echo "Reinitializing git repository..."
 rm -rf .git
-git init -b main
+git init -b main 2>/dev/null
 
-gh repo create $project_name --private
+echo "Creating GitHub repository..."
+gh repo create $github_org_name/$project_name --private --confirm
 
+echo "Pushing to GitHub..."
 git remote add origin git@github.com:$github_org_name/$project_name.git
-git add . && git commit -m 'initial commit'
+git add .
+git commit -m 'initial commit'
 git push --set-upstream origin main
