@@ -20,12 +20,26 @@ git clone \
 
 cd $project_name
 git sparse-checkout init --cone
-git sparse-checkout set infrastructure/$infrastructure_version $project_type/$mlops_version
+git sparse-checkout set infrastructure/$infrastructure_version $project_type/$mlops_version $project_type/$mlops_version/data $project_type/$mlops_version/data-science $project_type/$mlops_version/mlops
 
 # Move files to appropiate level
-mv $project_type/$mlops_version/data-science data-science
-mv $project_type/$mlops_version/mlops mlops
-mv $project_type/$mlops_version/data data
+if [ -d "$project_type/$mlops_version/data-science" ]; then
+  mv $project_type/$mlops_version/data-science data-science
+else
+  echo "Warning: data-science directory not found"
+fi
+
+if [ -d "$project_type/$mlops_version/mlops" ]; then
+  mv $project_type/$mlops_version/mlops mlops
+else
+  echo "Warning: mlops directory not found"
+fi
+
+if [ -d "$project_type/$mlops_version/data" ]; then
+  mv $project_type/$mlops_version/data data
+else
+  echo "Warning: data directory not found"
+fi
 
 if [[ "$mlops_version" == "python-sdk-v1" ]]
 then
