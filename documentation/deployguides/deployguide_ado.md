@@ -240,7 +240,7 @@ In this step, you will run an Azure DevOps pipeline, `initialise-project`, that 
 
 For Azure DevOps pipelines to create Azure Machine Learning infrastructure and deploy and execute Azure ML pipelines, it is necessary to create an Azure service principal for each Azure ML environment (Dev and/or Prod) and configure Azure DevOps service connections using those service principals.
 
-> **🔐 Security Best Practice**: Azure DevOps now supports **workload identity federation** as a more secure alternative to service principal secrets. Workload identity federation uses OpenID Connect (OIDC) to establish trust without storing long-lived secrets. For production deployments, consider using workload identity federation instead of the service principal methods described below. See [Microsoft's documentation](https://learn.microsoft.com/en-us/azure/devops/pipelines/library/connect-to-azure#create-an-azure-resource-manager-service-connection-using-workload-identity-federation) for setup instructions.
+> **Security Best Practice**: Azure DevOps now supports **workload identity federation** as a more secure alternative to service principal secrets. Workload identity federation uses OpenID Connect (OIDC) to establish trust without storing long-lived secrets. For production deployments, consider using workload identity federation instead of the service principal methods described below. See [Microsoft's documentation](https://learn.microsoft.com/en-us/azure/devops/pipelines/library/connect-to-azure#create-an-azure-resource-manager-service-connection-using-workload-identity-federation) for setup instructions.
 
 These service principals can be created using one of the two methods below:
 
