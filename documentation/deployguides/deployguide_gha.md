@@ -17,7 +17,7 @@
    - set up GitHub cli (mentioned above) (or via `sudo apt-get install gh`)
     - Login to GitHub: `gh auth login`
     - Config Git locally: `git config --global user.email "you@example.com"` and `git config --global user.name "Your Name"`
-    - 
+    
 >**Note:**
 >
 >**Git version 2.27 or newer is required. See [these instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md#debian-ubuntu-linux-raspberry-pi-os-apt) to upgrade.**
@@ -219,7 +219,7 @@
 > 3. You may also choose to change the region and compute type being used for deployment. The default compute is now **STANDARD_D4S_V5** (5th generation, improved performance). To change this, search for **STANDARD_D4S_V5** in the following pipeline files and change to a compute type that works for your setup:
 >      - `mlops-templates/aml-cli-v2/mlops/devops-pipelines/deploy-model-training-pipeline.yml`
 >      - `mlops-project-template/classical/aml-cli-v2/mlops/devops-pipelines/deploy-batch-endpoint-pipeline.yml`
->      - `/mlops-project-template/classical/aml-cli-v2/mlops/azureml/deploy/online/online-deployment.yml`
+>      - `mlops-project-template/classical/aml-cli-v2/mlops/azureml/deploy/online/online-deployment.yml`
 > 4. Note in the path above that you need to navigate to the right repository (e.g. **mlops-templates**), and the right ML interface (e.g. **aml-cli-v2**).
 >
 > **Note**: This modernized version uses **Standard_D4s_v5** (5th generation) instead of the older **Standard_DS3_v2** (3rd generation) for better performance and efficiency.
