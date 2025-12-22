@@ -239,35 +239,57 @@
 
 2. **Configure Terraform Variables (Required for GitHub Actions Permissions)**
 
-   In your project repository, edit the `infrastructure/terraform/terraform.tfvars` file to add the GitHub Actions service principal object ID from Step 5.3a:
+   In your project repository, copy the `infrastructure/terraform/terraform.tfvars.example` file and rename it to `terraform.tfvars`. Then edit the file to add the GitHub Actions service principal object ID from Step 5.3a:
 
-   ```hcl
-   namespace = "taxi"
-   postfix = "10005"
-   environment = "prod"  # or "dev" for dev branch
-   location = "eastus"
-   enable_aml_computecluster = true
-   enable_monitoring = false
-   
+   ```bash
+   namespace: mlopsv2
+   postfix: "0001"
+   location: "eastus"
+   environment: "dev"  
+   enable_aml_computecluster: true
+   enable_monitoring: false
+
    # REQUIRED: GitHub Actions service principal object ID for CI/CD permissions
    # Get this value from Step 5.3a above:
    # az ad sp show --id <app_id> --query id -o tsv
    github_actions_service_principal_id = "your-service-principal-object-id"
+
+   # VNet and Private Endpoints Configuration
+   # Set to true to enable network isolation with private endpoints
+   enable_private_endpoints = true
+
+   # VNet address space (only used if enable_private_endpoints = true)
+   # Ensure the address space is large enough for your needs:
+   # - Private endpoints: ~20 IPs (one per service per subnet)
+   # - Compute instances/cluster nodes: 1 IP per node
+   # Example: 10.0.0.0/16 provides 65,536 addresses
+   vnet_address_space               = "10.0.0.0/16"
+   training_subnet_address_prefix   = "10.0.0.0/24"    # For compute cluster nodes (254 hosts)
+   endpoints_subnet_address_prefix  = "10.0.1.0/24"    # For private endpoints (254 hosts)
    ```
 
    **Configuration Guidelines**:
    - **namespace**: Short name for your project (keep it concise to avoid storage account name length limits)
-   - **postfix**: Unique identifier (e.g., "10005"). If redeploying after deletion, use a different postfix to avoid Azure ML workspace soft-delete conflicts (see note below)
+   - **postfix**: Unique identifier (e.g., "0001"). If redeploying after deletion, use a different postfix to avoid Azure ML workspace soft-delete conflicts (see note below)
    - **environment**: "dev" or "prod" (should match your branch context)
    - **location**: Azure region (default: "eastus")
    - **github_actions_service_principal_id**: Service principal object ID from Step 5.3a (NOT the app ID)
+   - **enable_private_endpoints**: Set to `true` to enable VNet and private endpoints (default: `false`)
+   - **vnet_address_space**: VNet CIDR block when private endpoints enabled (default: "10.0.0.0/16")
+   - **training_subnet_address_prefix**: Subnet for compute resources (default: "10.0.0.0/24")
+   - **endpoints_subnet_address_prefix**: Subnet for private endpoints (default: "10.0.1.0/24")
 
-   This configuration enables Terraform to automatically grant the GitHub Actions service principal the required permissions to:
-   - Register datasets in Azure ML
-   - Upload data to the workspace storage account
-   - Execute training pipelines that access data
+   This configuration enables Terraform to automatically:
+   - Grant the GitHub Actions service principal the required permissions to:
+     - Register datasets in Azure ML
+     - Upload data to the workspace storage account
+     - Execute training pipelines that access data
+   - Deploy VNet and private endpoints if `enable_private_endpoints = true`
+   - Configure Network Security Groups with Azure ML required rules
+   - Create private DNS zones for name resolution within the VNet
 
-   These permissions (Storage Blob Data Reader and Storage Blob Data Contributor) will be automatically assigned to the Azure ML workspace storage account during infrastructure deployment.
+   These permissions (Storage Blob Data Reader and Storage Blob Data Contributor) will be automatically assigned to the Azure ML workspace storage account during infrastructure deployment. If private endpoints are enabled, all communication will occur over private IPs within the VNet.
+
 
    **For Bicep**: Role assignments are handled differently - see the Bicep templates for specific implementation details.
 
