@@ -17,10 +17,10 @@
    - set up GitHub cli (mentioned above) (or via `sudo apt-get install gh`)
     - Login to GitHub: `gh auth login`
     - Config Git locally: `git config --global user.email "you@example.com"` and `git config --global user.name "Your Name"`
-    
+
 >**Note:**
 >
->**Git version 2.27 or newer is required. See [these instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md#debian-ubuntu-linux-raspberry-pi-os-apt) to upgrade.**
+>**Git Version 2.27 or newer is required. See [these instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md#debian-ubuntu-linux-raspberry-pi-os-apt) to upgrade.**
 
    
 
@@ -33,7 +33,7 @@
 
    ![image](./images/gh-fork.png)
 
-   Go to https://github.com/Azure/mlops-project-template/generate to create a repository in your Github org using the mlops-project-template. This is the monorepo that you will use to pull example projects from in a later step. 
+   Go to https://github.com/Azure/mlops-project-template/generate to create a repository in your Github org using the mlops-project-template. This is the monorepo that you will use to pull example projects from in a later step.
 
    ![image](./images/gh-generate.png)
 
@@ -41,7 +41,7 @@
    On your local machine, select or create a root directory (ex: 'mlprojects') to hold your project repository as well as the mlops-v2 repository. Change to this directory.
 
    Clone the mlops-v2 repository to this directory. This provides the documentation and the `sparse_checkout.sh` script. This repository and folder will be used to bootstrap your projects:  
-   `# git clone https://github.com/Azure/mlops-v2.git` 
+   `# git clone https://github.com/Azure/mlops-v2.git`
 
 3. **Configure and run sparse checkout**  
    From your local project root directory, open the `/mlops-v2/sparse_checkout.sh` for editing. Edit the following variables as needed to select the infastructure management tool used by your organization, the type of Open this file in an editor and set the following variables:
@@ -89,8 +89,6 @@
    ```
    Currently, the following pipelines are supported:
    - classical 
-   - cv (computer-vision) 
-   - nlp (natural language processing)
 
 4. **Run sparse checkout**  
    The `sparse_checkout.sh` script will use ssh to authenticate to your GitHub organization. If this is not yet configured in your environment, follow the steps below or refer to the documentation at  [GitHub Key Setup](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent).
@@ -124,7 +122,7 @@
 
    This step creates an Azure AD application with federated credentials and GitHub secrets to allow the GitHub Action workflows to authenticate using OpenID Connect (OIDC) and create/interact with Azure Machine Learning Workspace resources.
 
-   **IMPORTANT**: This solution now uses OIDC workload identity federation instead of client secrets for enhanced security. No client secrets are stored or managed.
+   >**IMPORTANT**: This solution now uses OIDC workload identity federation instead of client secrets for enhanced security. No client secrets are stored or managed.
 
    **Step 5.1: Create Azure AD Application**
 
@@ -256,7 +254,7 @@
 
    # VNet and Private Endpoints Configuration
    # Set to true to enable network isolation with private endpoints
-   enable_private_endpoints = true
+   enable_private_endpoints = false
 
    # VNet address space (only used if enable_private_endpoints = true)
    # Ensure the address space is large enough for your needs:
@@ -274,22 +272,16 @@
    - **environment**: "dev" or "prod" (should match your branch context)
    - **location**: Azure region (default: "eastus")
    - **github_actions_service_principal_id**: Service principal object ID from Step 5.3a (NOT the app ID)
-   - **enable_private_endpoints**: Set to `true` to enable VNet and private endpoints (default: `false`)
-   - **vnet_address_space**: VNet CIDR block when private endpoints enabled (default: "10.0.0.0/16")
-   - **training_subnet_address_prefix**: Subnet for compute resources (default: "10.0.0.0/24")
-   - **endpoints_subnet_address_prefix**: Subnet for private endpoints (default: "10.0.1.0/24")
 
    This configuration enables Terraform to automatically:
    - Grant the GitHub Actions service principal the required permissions to:
      - Register datasets in Azure ML
      - Upload data to the workspace storage account
-     - Execute training pipelines that access data
-   - Deploy VNet and private endpoints if `enable_private_endpoints = true`
+     - Execute training pipelines that access data in the storage account
    - Configure Network Security Groups with Azure ML required rules
    - Create private DNS zones for name resolution within the VNet
 
-   These permissions (Storage Blob Data Reader and Storage Blob Data Contributor) will be automatically assigned to the Azure ML workspace storage account during infrastructure deployment. If private endpoints are enabled, all communication will occur over private IPs within the VNet.
-
+   These permissions (Storage Blob Data Reader and Storage Blob Data Contributor) will be automatically assigned to the Azure ML workspace storage account during infrastructure deployment.
 
    **For Bicep**: Role assignments are handled differently - see the Bicep templates for specific implementation details.
 
@@ -311,9 +303,9 @@
    - Compliance requirements mandating private connectivity
    - Sensitive data workloads requiring additional security
 
-   **To enable network isolation**, add the following to your `infrastructure/terraform/terraform.tfvars`:
+   **To enable network isolation**, add the following to your `infrastructure/terraform/terraform.tfvars.sample`:
 
-   ```hcl
+   ```bash
    # Enable VNet and private endpoints for network isolation
    enable_private_endpoints = true
 
@@ -333,20 +325,14 @@
    - All Azure ML resources communicate through private IPs
    - Public network access restricted on storage, Key Vault, and Container Registry
    - Deployment time increases by ~5 minutes
-   - Additional cost: ~$51/month for private endpoints
 
-   **For detailed information**, see the comprehensive [VNet Implementation Guide](https://github.com/Azure/mlops-project-template/blob/main/infrastructure/terraform/VNET_IMPLEMENTATION.md) which includes:
-   - Architecture diagrams and network topology
-   - Security configuration details
-   - IP address planning guidelines
-   - Testing and troubleshooting procedures
-   - Cost considerations
 
    > **Note**: For initial evaluation and development environments, you can leave `enable_private_endpoints = false` (default). The infrastructure will deploy with public network access, which simplifies setup and reduces costs. You can always enable private endpoints later when moving to production.
 
-3. **Deploy Azure Machine Learning Infrastructure**   > Note:
+3. **Deploy Azure Machine Learning Infrastructure**  
+   > Note:
    >
-   > The enable_monitoring flag in these files defaults to False. Enabling this flag will add additional elements to the deployment to support Azure ML monitoring based on https://github.com/microsoft/AzureML-Observability. This will include an ADX cluster and increase the deployment time and cost of the MLOps solution.
+   > The _enable_monitoring_ flag in these files defaults to False. Enabling this flag will add additional elements to the deployment to support Azure ML monitoring based on https://github.com/microsoft/AzureML-Observability. This will include an ADX cluster and increase the deployment time and cost of the MLOps solution.
    
 3. **Deploy Azure Machine Learning Infrastructure**
 
@@ -372,50 +358,62 @@
 
 ## Sample Training and Deployment Scenario
 
-The solution accelerator includes code and data for a sample end-to-end machine learning pipeline which runs a linear regression to predict taxi fares in NYC. The pipeline is made up of components, each serving  different functions, which can be registered with the workspace, versioned, and reused with various inputs and outputs. Sample pipelines and workflows for the Computer Vision and NLP scenarios will have different steps and deployment steps.
+The solution accelerator includes code and data for a sample end-to-end machine learning pipeline which runs a linear regression to predict taxi fares in NYC. The pipeline is made up of components, each serving different functions, which can be registered with the workspace, versioned, and reused with various inputs and outputs. Sample pipelines and workflows for the Computer Vision and NLP scenarios will have different steps and deployment steps.
 
 This training pipeline contains the following steps:
 
-**Prepare Data**  
-This component takes multiple taxi datasets (yellow and green) and merges/filters the data, and prepare the train/val and evaluation datasets.  
-Input: Local data under ./data/ (multiple .csv files)  
-Output: Single prepared dataset (.csv) and train/val/test datasets.
+### Pipeline Components
 
-**Train Model**  
-This component trains a Linear Regressor with the training set.  
-Input: Training dataset  
-Output: Trained model (pickle format)  
-   
-**Evaluate Model**  
-   This component uses the trained model to predict taxi fares on the test set.  
-   Input: ML model and Test dataset  
-   Output: Performance of model and a deploy flag whether to deploy or not.  
-   This component compares the performance of the model with all previous deployed models on the new test dataset and decides whether to promote or not model into production. Promoting model into production happens by registering the model in AML workspace.
+**Prepare Data**
 
-**Register Model**  
-   This component scores the model based on how accurate the predictions are in the test set.  
-   Input: Trained model and the deploy flag.  
-   Output: Registered model in Azure Machine Learning.  
+This component takes multiple taxi datasets (yellow and green) and merges/filters the data, and prepares the train/val and evaluation datasets.
+
+- **Input**: Local data under `./data/` (multiple `.csv` files)
+- **Output**: Single prepared dataset (`.csv`) and train/val/test datasets
+
+**Train Model**
+
+This component trains a Linear Regressor with the training set.
+
+- **Input**: Training dataset
+- **Output**: Trained model (pickle format)
+
+**Evaluate Model**
+
+This component uses the trained model to predict taxi fares on the test set.
+
+- **Input**: ML model and test dataset
+- **Output**: Performance of model and a deploy flag whether to deploy or not
+
+This component compares the performance of the model with all previous deployed models on the new test dataset and decides whether to promote the model into production. Promoting the model into production happens by registering the model in the AML workspace.
+
+**Register Model**
+
+This component scores the model based on how accurate the predictions are in the test set.
+
+- **Input**: Trained model and the deploy flag
+- **Output**: Registered model in Azure Machine Learning
 
 ## Deploying the Model Training Pipeline to the Test Environment
 
-Next, you will deploy the model training pipeline to your new Azure Machine Learning workspace. This pipeline will create a compute cluster instance, register a training environment defining the necessary Docker image and python packages, register a training dataset, then start the training pipeline described in the last section. When the job is complete, the trained model will be registered in the Azure ML workspace and be available for deployment.
+Next, you will deploy the model training pipeline to your new Azure Machine Learning workspace. This pipeline will create a compute cluster instance, register a training environment defining the necessary Docker image and Python packages, register a training dataset, then start the training pipeline described in the previous section. When the job is complete, the trained model will be registered in the Azure ML workspace and be available for deployment.
 
-In your GitHub project repository (ex: taxi-fare-regression), select **Actions**  
- 
-   ![GH-actions](./images/gh-actions.png)
-      
-Select the **deploy-model-training-pipeline** from the workflows listed on the left and the click **Run Workflow** to execute the model training workflow. This will take several minutes to run, depending on the compute size. 
+In your GitHub project repository (ex: taxi-fare-regression), select **Actions**
 
-   ![Pipeline Run](./images/gh-training-pipeline.png)
-   
-   Once completed, a successful run will register the model in the Azure Machine Learning workspace. 
+![GH-actions](./images/gh-actions.png)
 
- >**Note**: If you want to check the output of each individual step, for example to view output of a failed run, click a job output, and then click each step in the job to view any output of that step. 
+Select the **deploy-model-training-pipeline** from the workflows listed on the left and click **Run Workflow** to execute the model training workflow. This will take several minutes to run, depending on the compute size.
 
-   ![Training Step](./images/gh-training-step.png)
+![Pipeline Run](./images/gh-training-pipeline.png)
 
-With the trained model registered in the Azure Machine learning workspace, you are ready to deploy the model for scoring.
+Once completed, a successful run will register the model in the Azure Machine Learning workspace.
+
+> **Note**: If you want to check the output of each individual step, for example to view output of a failed run, click a job output, and then click each step in the job to view any output of that step.
+
+![Training Step](./images/gh-training-step.png)
+
+With the trained model registered in the Azure Machine Learning workspace, you are ready to deploy the model for scoring.
+
 
 ## Deploying the Trained Model in Dev
 
