@@ -1,35 +1,59 @@
 # Deployment Guide using Github Repositories Workflows
 
-## Technical requirements
+## Technical Requirements
 
-- Github as the source control repository
-- Github Actions as the DevOps orchestration tool
-- [GitHub client](https://cli.github.com/)
-- [Azure CLI ](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
-- The [Terraform extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=ms-devlabs.custom-terraform-tasks) if you are using Azure DevOps + Terraform to spin up infrastructure
-- One or more Azure subscription(s) based on whether you are deploying Prod only or Prod and Dev environments
-     - **Important** - As mentioned in the **Prerequisites** at the beginning [here](https://github.com/Azure/mlops-v2?tab=readme-ov-file#prerequisites), if you plan to use either a Free/Trial or similar learning purpose subscriptions, they might pose 'Usage + quotas' limitations in the default Azure region being used for deployment. Please read provided instructions carefully to succeessfully execute this deployment.
-- Azure service principals to access / create Azure resources from Azure DevOps or Github Actions (or the ability to create them)
-- Git bash, [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) or another shell script runner on your local machine
--  When using WSL, 
-   -  make sure to completely work in the context of the unix env (cloning of the repo, defining the file paths,...). You can then connect to this environment with VSCode (if that is your editor) if you install the ["Remote - SSH"](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension
-   - dos2unix: `sudo apt-get install dos2unix`
-   - set up GitHub cli (mentioned above) (or via `sudo apt-get install gh`)
-    - Login to GitHub: `gh auth login`
-    - Config Git locally: `git config --global user.email "you@example.com"` and `git config --global user.name "Your Name"`
+### Source Control and DevOps
+- **GitHub** as the source control repository
+- **GitHub Actions** as the CI/CD orchestration tool
+- [GitHub CLI](https://cli.github.com/) installed locally
 
->**Note:**
->
->**Git Version 2.27 or newer is required. See [these instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md#debian-ubuntu-linux-raspberry-pi-os-apt) to upgrade.**
+### Azure Tools
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) installed locally
+- One or more Azure subscriptions (separate subscriptions recommended for Dev and Prod environments)
+   - **Important**: Free/Trial subscriptions may have quota limitations. Review the [Prerequisites](https://github.com/Azure/mlops-v2?tab=readme-ov-file#prerequisites) carefully before deployment.
+- Azure service principal with permissions to create and manage resources
 
+### Infrastructure as Code (Optional)
+- [Terraform extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=ms-devlabs.custom-terraform-tasks) (only if using Azure DevOps with Terraform)
+
+### Local Development Environment
+- **Shell environment**: Git Bash, [WSL](https://learn.microsoft.com/windows/wsl/install), or equivalent Unix shell
+
+### WSL-Specific Setup (If Using Windows Subsystem for Linux)
+If using WSL, complete all setup within the Unix environment:
+
+1. **Install required tools**:
+    ```bash
+    sudo apt-get update
+    sudo apt-get install dos2unix gh
+    ```
+
+2. **Configure GitHub CLI**:
+    ```bash
+    gh auth login
+    ```
+
+3. **Configure Git**:
+    ```bash
+    git config --global user.email "you@example.com"
+    git config --global user.name "Your Name"
+    ```
+
+4. **VSCode integration** (optional):
+    - Install the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension
+    - Connect VSCode to your WSL environment for seamless editing
+
+> **Note**: Clone repositories and define all file paths within the WSL environment to avoid cross-platform compatibility issues.
+
+
+> **Important**: Git version 2.51 or newer is required. See [upgrade instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md#debian-ubuntu-linux-raspberry-pi-os-apt) if needed.
    
 
 ## Configure The GitHub Environment
 ---
 
-
 1. **Replicate MLOps-V2 Template Repositories in your GitHub organization**  
-   Go to https://github.com/Azure/mlops-templates/fork to fork the mlops templates repo into your Github org. This repo has reusable mlops code that can be used across multiple projects. 
+   Go to https://github.com/Azure/mlops-templates/fork to fork the mlops templates repo into your Github org. This repo has reusable mlops code that can be used across multiple projects.
 
    ![image](./images/gh-fork.png)
 
@@ -47,8 +71,8 @@
    From your local project root directory, open the `/mlops-v2/sparse_checkout.sh` for editing. Edit the following variables as needed to select the infastructure management tool used by your organization, the type of Open this file in an editor and set the following variables:
    
    >**Note:**
-> When running the script through a  "vanilla" WSL, then you'll most likely get strange errors... In that case it might suffice to use dos2unix on the file
-> (in WSL) run; `dos2unix sparse_checkout.sh` (in the mlops-v2 repo folder)
+   > When running the script through a  "vanilla" WSL, then you'll most likely get strange errors... In that case it might suffice to use dos2unix on the file
+   > (in WSL) run; `dos2unix sparse_checkout.sh` (in the mlops-v2 repo folder)
    
 
    * **infrastructure_version** selects the tool that will be used to deploy cloud resources.
@@ -290,9 +314,10 @@
    > **Alternative**: If your organization doesn't allow OIDC, you can use a client secret instead. However, this requires storing and managing secrets, which increases security risks. See [GitHub's documentation on secrets](https://docs.github.com/en/actions/security-guides/encrypted-secrets) for more information.
 
    > **Note**: The `github_actions_service_principal_id` must be the **object ID**, not the application ID. You can retrieve it using:
-   > ```bash
-   > az ad sp show --id <APPLICATION_ID> --query id -o tsv
-   > ```
+
+   ```bash
+   az ad sp show --id <APPLICATION_ID> --query id -o tsv
+   ```
 
 2.1. **(Optional) Configure Virtual Network and Private Endpoints**
 
