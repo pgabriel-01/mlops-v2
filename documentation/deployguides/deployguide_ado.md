@@ -255,19 +255,30 @@ These service principals can be created using one of the two methods below:
    </p>
 
 
-3. Copy the bash commands below to your computer and update the **projectName**, **subscriptionId**, and **environment** variables with the values for your project. If you are creating both a Dev and Prod environment you will need to run this script once for each environment, creating a service principal for each. This command will also grant the **Contributor** role to the service principal in the subscription provided. This is required for Azure DevOps to properly deploy resources to that subscription. 
+3. Copy the bash commands below to your computer and update the **projectName**, **subscriptionId**, and **environment** variables with the values for your project. If you are creating both a Dev and Prod environment you will need to run this script once for each environment, creating a service principal for each. This command will also grant the **Contributor** and **Role Based Access Control Administrator** roles to the service principal in the subscription provided. These are required for Azure DevOps to properly deploy resources and create role assignments for managed identities.
 
    ``` bash
    projectName="<your project name>"
-   roleName="Contributor"
    subscriptionId="<subscription Id>"
    environment="<Dev|Prod>" #First letter should be capitalized
    servicePrincipalName="Azure-ARM-${environment}-${projectName}"
+   
    # Verify the ID of the active subscription
    echo "Using subscription ID $subscriptionId"
-   echo "Creating SP for RBAC with name $servicePrincipalName, with role $roleName and in scopes /subscriptions/$subscriptionId"
-   az ad sp create-for-rbac --name $servicePrincipalName --role $roleName --scopes /subscriptions/$subscriptionId
-   echo "Please ensure that the information created here is properly save for future use."
+   echo "Creating SP for RBAC with name $servicePrincipalName"
+   
+   # Create the service principal and capture the output
+   spOutput=$(az ad sp create-for-rbac --name $servicePrincipalName --role Contributor --scopes /subscriptions/$subscriptionId)
+   echo "$spOutput"
+   
+   # Get the service principal object ID for additional role assignment
+   spObjectId=$(az ad sp list --display-name $servicePrincipalName --query "[0].id" -o tsv)
+   
+   # Assign Role Based Access Control Administrator for creating role assignments (required for Terraform)
+   echo "Assigning Role Based Access Control Administrator role..."
+   az role assignment create --assignee-object-id $spObjectId --assignee-principal-type ServicePrincipal --role "Role Based Access Control Administrator" --scope /subscriptions/$subscriptionId
+   
+   echo "Please ensure that the information created here is properly saved for future use."
    ```
 
 4. Copy your edited commmands into the Azure Shell and run them (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>v</kbd>).
@@ -325,7 +336,9 @@ These service principals can be created using one of the two methods below:
    </p>
 
 
-7. Repeat step here, if you deploy Dev and Prod into the same subscription, otherwise change to the prod subscription and repeat with "Azure-ARM-Prod-ProjectName". The basic SP setup is successfully finished.
+7. **Important for Terraform**: Repeat step 6 but assign the **Role Based Access Control Administrator** role. This is required for Terraform to create role assignments for managed identities used by Azure ML workspace and compute resources.
+
+8. Repeat steps here, if you deploy Dev and Prod into the same subscription, otherwise change to the prod subscription and repeat with "Azure-ARM-Prod-ProjectName". The basic SP setup is successfully finished.
 </details>
 
 
@@ -578,7 +591,35 @@ The Terraform pipeline reads configuration from `config-infra-prod.yml`. Key var
 
 **State lock errors**: If a previous pipeline run failed, the state file may be locked. Wait a few minutes or manually break the lease on the state blob in Azure Storage.
 
-**Provider authentication**: The pipeline uses the service principal from your ADO service connection. Ensure it has Contributor access to your subscription.
+**Provider authentication**: The pipeline uses Workload Identity Federation (OIDC) from your ADO service connection. Ensure the service connection is configured with "Workload identity federation" credential type.
+
+**Role assignment errors (403 Forbidden)**: If you see errors like `does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/write'`, the service principal needs the **Role Based Access Control Administrator** role at the subscription level. This is required because Terraform creates managed identities and assigns roles for the Azure ML workspace. Grant this role using:
+
+   ```bash
+   az role assignment create \
+     --assignee-object-id <service-principal-object-id> \
+     --assignee-principal-type ServicePrincipal \
+     --role "Role Based Access Control Administrator" \
+     --scope /subscriptions/<subscription-id>
+   ```
+
+**Storage authentication errors**: The Terraform backend uses Azure AD authentication. Ensure the service principal has the **Storage Blob Data Contributor** role on the Terraform state storage account. This is automatically granted during the bootstrap stage, but if you encounter issues, grant it manually:
+
+   ```bash
+   az role assignment create \
+     --assignee-object-id <service-principal-object-id> \
+     --assignee-principal-type ServicePrincipal \
+     --role "Storage Blob Data Contributor" \
+     --scope /subscriptions/<subscription-id>/resourceGroups/<rg-name>/providers/Microsoft.Storage/storageAccounts/<storage-account>
+   ```
+
+**Required Azure Roles Summary**:
+
+| Role | Scope | Purpose |
+| ---- | ----- | ------- |
+| Contributor | Subscription | Create and manage Azure resources |
+| Role Based Access Control Administrator | Subscription | Create role assignments for managed identities |
+| Storage Blob Data Contributor | Terraform state storage account | Read/write Terraform state files |
 
 </details>
 
