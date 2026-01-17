@@ -434,7 +434,12 @@ Edit `config-infra-prod.yml` to set the variables for your environment. You can 
 
 If the `enable_aml_computecluster` property is set to true, the infra deployment pipeline will pre-create Azure ML compute clusters for your training. In the case of CV or NLP scenarios, it will create both CPU-based and GPU-based compute clusters so ensure that your subscription has GPU compute available. 
 
-Now you are ready to run the infrastructure deployment pipeline. Open the **Pipelines** section again and select **New pipeline** in the upper right of the page.
+Now you are ready to run the infrastructure deployment pipeline. Choose either **Bicep** or **Terraform** based on your preference:
+
+<details>
+<summary><strong>Option 1: Deploy Infrastructure with Bicep</strong></summary>
+
+Open the **Pipelines** section and select **New pipeline** in the upper right of the page.
 
    <p align="center">
          <img src="./images/ado-create-pipeline.png" alt="Create Pipeline"/>
@@ -464,7 +469,105 @@ Now you will see the pipeline details.
    * Resource Group for your Workspace
    * Azure Machine Learning Workspace and associated resources including Storage Account, Container Registry, Application Insights, and Keyvault 
    * Inside the workspace, an AmlCompute cluster will be created
-   
+
+</details>
+
+<details>
+<summary><strong>Option 2: Deploy Infrastructure with Terraform</strong></summary>
+
+#### Prerequisites for Terraform
+
+1. **Install the Terraform Extension for Azure DevOps**
+
+   The Terraform pipeline uses the `TerraformTaskV2` task which requires the [Terraform extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=ms-devlabs.custom-terraform-tasks).
+
+   To install:
+   - Navigate to your Azure DevOps organization settings
+   - Select **Extensions** → **Browse marketplace**
+   - Search for "Terraform" and install **Terraform** by Microsoft DevLabs
+   - Or install directly from: https://marketplace.visualstudio.com/items?itemName=ms-devlabs.custom-terraform-tasks
+
+   > **Version Requirement**: This solution requires **Terraform v1.10.0 or higher** with azurerm provider ~> 4.52.0
+
+2. **Verify Service Connection Configuration**
+
+   The Terraform templates use the service connection name defined in your `config-infra-prod.yml`:
+
+   ```yaml
+   # Azure DevOps
+   ado_service_connection_rg: Azure-ARM-Prod
+   ```
+
+   Ensure your Azure DevOps service connection is named exactly **Azure-ARM-Prod** (or update the config to match your service connection name).
+
+   The service connection is used for:
+   - Terraform backend state storage authentication
+   - Azure resource provisioning via `azurerm` provider
+
+#### Terraform State Storage
+
+The Terraform pipeline automatically creates a storage account for Terraform state management. The first stage (`CreateStorageAccountForTerraformState`) provisions:
+
+- A resource group for state storage
+- An Azure Storage Account
+- A blob container for `.tfstate` files
+
+This ensures your Terraform state is securely stored in Azure and supports team collaboration.
+
+#### Create and Run the Terraform Infrastructure Pipeline
+
+1. Open the **Pipelines** section and select **New pipeline**
+
+2. Configure the pipeline:
+   - Select **Azure Repos Git**
+   - Select your ML project repository (e.g., **taxi-fare-regression**)
+   - Select **Existing Azure Pipelines YAML file**
+   - Ensure the selected branch is **main**
+   - Select the `/infrastructure/terraform/devops-pipelines/tf-ado-deploy-infra.yml` file in the Path drop-down
+   - Click **Continue**
+
+3. Review the pipeline YAML. The Terraform pipeline has two stages:
+   - **CreateStorageAccountForTerraformState**: Creates backend storage for Terraform state
+   - **DeployAzureMachineLearningRG**: Runs terraform init, validate, plan, and apply
+
+4. Click **Run** to execute the pipeline
+
+5. On first run, you may need to grant the pipeline access to the **mlops-templates** repository. Click **View** when prompted, then **Permit** for each repository requiring access.
+
+The pipeline will:
+- Create the Terraform state storage infrastructure
+- Initialize Terraform with the Azure backend
+- Validate the Terraform configuration
+- Plan the infrastructure changes
+- Apply the infrastructure to create your Azure ML workspace
+
+#### Terraform Pipeline Configuration Variables
+
+The Terraform pipeline reads configuration from `config-infra-prod.yml`. Key variables include:
+
+| Variable | Description | Example |
+| -------- | ----------- | ------- |
+| `namespace` | Prefix for resource naming | `mlopsv2` |
+| `postfix` | Unique suffix for resources | `0001` |
+| `location` | Azure region | `eastus` |
+| `environment` | Environment name | `prod` |
+| `enable_aml_computecluster` | Create AML compute cluster | `true` |
+| `aml_compute_sku` | VM SKU for compute cluster | `STANDARD_D16S_V3` |
+| `enable_monitoring` | Enable Azure Monitor | `false` |
+| `ado_service_connection_rg` | ADO service connection name | `Azure-ARM-Prod` |
+
+#### Troubleshooting Terraform Deployments
+
+**Extension not found**: If you see errors about `TerraformTaskV2`, ensure the Terraform extension is installed in your Azure DevOps organization.
+
+**Service connection errors**: Verify the service connection name in your config matches exactly what's configured in Azure DevOps Project Settings → Service connections.
+
+**State lock errors**: If a previous pipeline run failed, the state file may be locked. Wait a few minutes or manually break the lease on the state blob in Azure Storage.
+
+**Provider authentication**: The pipeline uses the service principal from your ADO service connection. Ensure it has Contributor access to your subscription.
+
+</details>
+
 Your Azure Machine Learning infrastructure is now deployed and you are ready to deploy an ML model training pipeline.
  
 ### Deploy Azure Machine Learning Model Training Pipeline
