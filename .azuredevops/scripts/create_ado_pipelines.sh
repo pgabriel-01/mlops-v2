@@ -1,9 +1,18 @@
 repo_name=$1
 project_name=$2
-path_to_infrastructure_pipelines=infrastructure/pipelines
 path_to_mlops_pipelines=mlops/devops-pipelines
 
 cd $repo_name
+
+# Detect infrastructure pipeline path (bicep uses 'pipelines', terraform uses 'devops-pipelines')
+if [ -d "infrastructure/pipelines" ]; then
+    path_to_infrastructure_pipelines=infrastructure/pipelines
+elif [ -d "infrastructure/devops-pipelines" ]; then
+    path_to_infrastructure_pipelines=infrastructure/devops-pipelines
+else
+    echo "ERROR: No infrastructure pipelines folder found"
+    exit 1
+fi
 
 az pipelines folder create \
     --path $repo_name \

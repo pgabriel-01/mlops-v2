@@ -357,7 +357,7 @@ Name this service connection **Azure-ARM-Prod**.  Check **Grant access permissio
 ### Create Azure DevOps Environment
 ---
 
-The pipelines in each branch of your ML project repository will depend on an Azure DevOps environment. These environments should be created before deployment.
+The pipelines in each branch of your ML project repository will depend on an Azure DevOps environment. These environments should be created before deployment./Users/gabriel/Downloads/mlops-v2-1.1.1/mlops_v2/documentation/deployguides/images/
 
 To create the prod environment, select **Pipeline** in the left menu and **Environments**. Select **New environment**
 
@@ -504,15 +504,23 @@ Now you will see the pipeline details.
    - Terraform backend state storage authentication
    - Azure resource provisioning via `azurerm` provider
 
-#### Terraform State Storage
+#### Terraform State Storage & Bootstrap Environment
 
-The Terraform pipeline automatically creates a storage account for Terraform state management. The first stage (`CreateStorageAccountForTerraformState`) provisions:
+Unlike Bicep which deploys directly to Azure, Terraform requires a **backend storage account** to store its state file (`.tfstate`). This state file tracks the resources Terraform manages and enables team collaboration.
 
-- A resource group for state storage
-- An Azure Storage Account
-- A blob container for `.tfstate` files
+The Terraform infrastructure pipeline handles this automatically with a **two-stage approach**:
 
-This ensures your Terraform state is securely stored in Azure and supports team collaboration.
+| Stage | Purpose |
+| ----- | ------- |
+| **CreateStorageAccountForTerraformState** | Creates the bootstrap environment: resource group, storage account, and blob container for state files |
+| **DeployAzureMachineLearningRG** | Runs terraform init, validate, plan, and apply to deploy your AML infrastructure |
+
+The bootstrap environment creates:
+- **Resource Group**: `rg-<namespace>-<postfix><environment>-tf` (e.g., `rg-taxi-70001prod-tf`)
+- **Storage Account**: `st<namespace><postfix><env>tf` (e.g., `sttaxi70001prodtf`)
+- **Blob Container**: `tfstate` - stores the Terraform state file
+
+> **Note**: The bootstrap storage account is created using Azure CLI tasks with your service connection. Once created, subsequent Terraform runs will use this backend to store and retrieve state.
 
 #### Create and Run the Terraform Infrastructure Pipeline
 
@@ -532,7 +540,13 @@ This ensures your Terraform state is securely stored in Azure and supports team 
 
 4. Click **Run** to execute the pipeline
 
-5. On first run, you may need to grant the pipeline access to the **mlops-templates** repository. Click **View** when prompted, then **Permit** for each repository requiring access.
+5. On first run, the pipeline needs permission to access the **mlops-templates** repository. You will see a banner indicating permissions are needed, with the Terraform stages visible (Create Storage for Terraform, Deploy AML Workspace).
+
+   <p align="center">
+      <img src="./images/ado-tf-pipeline-permissions.png" alt="Terraform pipeline permissions" />
+   </p>
+
+   Click **View** to see the permissions waiting for review, then click **Permit** for each repository to grant access. The pipeline will then continue execution.
 
 The pipeline will:
 - Create the Terraform state storage infrastructure
