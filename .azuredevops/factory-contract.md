@@ -94,13 +94,14 @@ Its private defaults are VNet `10.20.0.0/16`, Managed DevOps Pool subnet
 concurrency `2`.
 
 The contract was validated against `mlops-templates` commit
-`8f6a200a17cd36a7527b0f64aac9047b7fd22ce0`. The factory defaults to
+`e233572816239ac09834e5b1e0b8171ab9c5bfd2`, which normalizes and validates
+Terraform boolean parameters before planning. The factory defaults to
 `refs/heads/main` for the current smooth path; set `mlopsTemplatesRef` to a
 commit SHA when reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`3b4af546d4417f79cd54fe9f17a5a1fbd1c9c3f2`.
+`3930df58b4659d25e6962676e6e42804eedd1d19`.
 
 The hardened state storage account has public network access disabled, shared
 key access disabled, and default OAuth authentication enabled. The state
