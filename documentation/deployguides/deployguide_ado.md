@@ -10,6 +10,7 @@ This document will guide you through using the MLOps V2 project generator to dep
 - If using Terraform to create and manage infrastructure from Azure DevOps:
   - Install the [Terraform extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=ms-devlabs.custom-terraform-tasks)
   - **This modernized version requires Terraform v1.10.0 or higher** with azurerm provider ~> 4.52.0
+  - For private networking, use workload identity federation and a Managed DevOps Pool injected into the target VNet. The project-template fork must implement the [private factory contract](../../.azuredevops/factory-contract.md).
 - **Python 3.11 or higher** for local development and testing
 
 
@@ -199,6 +200,13 @@ In this step, you will run an Azure DevOps pipeline, `initialise-project`, that 
    - **Infrastructure Provider**: Choose the provider to use to deploy Azure infrastructure for your project.
      - Choose **Bicep** to deploy using Azure Bicep templates
      - Choose **terraform** to use terraform based templates. 
+   - **Network Mode**:
+     - Choose **public** for the original flattened project layout and hosted-agent deployment.
+     - Choose **private** for the keyless Azure DevOps and Terraform flow. Private mode preserves the direct `mlops-project-template` paths and requires its `platform-ado-bootstrap.yml` entrypoint.
+   - **Deployment Environment**: Select **dev**, **test**, or **prod**. The factory generates a non-secret `config-factory-<environment>.yml` manifest and uses the matching protected `mlops-<environment>` variable group.
+   - **MLOps Templates Git Ref**: Use a release tag or commit SHA after validating the integration. `refs/heads/main` is intended only for initial development.
+   - **Platform and Workload WIF Service Connections**: Supply the names of the pre-created workload identity federation connections. The factory does not accept or store client secrets.
+   - **Managed DevOps Pool settings**: For private mode, provide the environment-specific pool name, resource group, Azure region, and VM SKU.
 
    
    After selecting the parameters, click **Run** at the bottom of the panel. The first run of the pipeline will prompt you to grant access to the repositories you created.
@@ -234,12 +242,38 @@ In this step, you will run an Azure DevOps pipeline, `initialise-project`, that 
 
 
  
-### Create and Configure Service Principals and Connections
+### Create and Configure Workload Identities and Connections
 ---
 
 For Azure DevOps pipelines to create Azure Machine Learning infrastructure and deploy and execute Azure ML pipelines, it is necessary to create an Azure service principal for each Azure ML environment (Dev and/or Prod) and configure Azure DevOps service connections using those service principals.
 
 > **Security Best Practice**: Azure DevOps now supports **workload identity federation** as a more secure alternative to service principal secrets. Workload identity federation uses OpenID Connect (OIDC) to establish trust without storing long-lived secrets. For production deployments, consider using workload identity federation instead of the service principal methods described below. See [Microsoft's documentation](https://learn.microsoft.com/en-us/azure/devops/pipelines/library/connect-to-azure#create-an-azure-resource-manager-service-connection-using-workload-identity-federation) for setup instructions.
+
+> **Private mode requirement:** Both the platform and workload Azure Resource
+> Manager service connections must use workload identity federation. Create a
+> protected variable group named `mlops-dev`, `mlops-test`, or `mlops-prod`
+> containing `ado_service_connection_rg`,
+> `ado_service_connection_aml_ws`, and `cicd_principal_object_id`. Authorize the
+> group and connections only for the pipelines that require them. Do not put
+> live identity IDs or credentials in `config-factory-<environment>.yml`.
+
+### Private, keyless deployment order
+---
+
+Private resources are not reachable from Microsoft-hosted agents after public
+access is disabled. Run the generated pipelines in this order:
+
+1. Create the platform and workload WIF identities, service connections, and protected environment variable group.
+2. Run `00-<environment>-platform-bootstrap` from a Microsoft-hosted or other pre-existing agent to create and harden the Terraform backend with shared-key access disabled.
+3. Deploy the VNet, the subnet delegated to `Microsoft.DevOpsInfrastructure/pools`, private DNS zones and links, and private endpoints.
+4. Deploy the Managed DevOps Pool into the delegated subnet, authorize it for the Azure DevOps project, and verify that an agent resolves and reaches the private endpoints.
+5. Run `10-tf-ado-deploy-infra` with the workload WIF connection and the Managed DevOps Pool.
+6. Run the `20-` Classical AML CLI v2 training pipeline, then the online and/or batch endpoint pipelines from the Managed DevOps Pool.
+
+The platform and workload Terraform assets remain owned by
+`mlops-project-template`. Generic Terraform and AML execution steps remain
+owned by `mlops-templates`. The factory selects those assets, creates the
+non-secret environment manifest, and registers all five entrypoints.
 
 These service principals can be created using one of the two methods below:
 

@@ -31,6 +31,7 @@ It accomplishes these goals with a template-based approach for end-to-end data s
 2. For Azure DevOps-based deployments and projects:
     * [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) with `azure-devops` extension.
     * [Terraform extension for Azure DevOps](https://marketplace.visualstudio.com/items?itemName=ms-devlabs.custom-terraform-tasks) if you are using Terraform to spin up infrastructure
+    * For private Terraform deployments, workload identity federation service connections and a Managed DevOps Pool with access to the private network. See the [Azure DevOps factory contract](.azuredevops/factory-contract.md).
 3. For GitHub-based deployments and projects:
     * [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
     * [GitHub client](https://cli.github.com/)

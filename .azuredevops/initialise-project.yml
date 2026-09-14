@@ -52,6 +52,113 @@ parameters:
       - bicep
       - terraform
 
+  - name: networkMode
+    displayName: Network Mode
+    type: string
+    default: public
+    values:
+      - public
+      - private
+
+  - name: deploymentEnvironment
+    displayName: Deployment Environment
+    type: string
+    default: dev
+    values:
+      - dev
+      - test
+      - prod
+
+  - name: variableGroupName
+    displayName: Protected Variable Group
+    type: string
+    default: AUTO
+
+  - name: mlopsTemplatesRef
+    displayName: MLOps Templates Git Ref
+    type: string
+    default: refs/heads/main
+
+  - name: platformServiceConnection
+    displayName: Platform Bootstrap WIF Service Connection
+    type: string
+    default: AUTO
+
+  - name: workloadServiceConnection
+    displayName: Workload WIF Service Connection
+    type: string
+    default: AUTO
+
+  - name: managedDevOpsPoolName
+    displayName: Managed DevOps Pool Azure Resource Name
+    type: string
+    default: AUTO
+
+  - name: managedDevOpsPoolAlias
+    displayName: Managed DevOps Pool Azure DevOps Alias
+    type: string
+    default: AUTO
+
+  - name: managedDevOpsPoolResourceGroup
+    displayName: Managed DevOps Pool Resource Group
+    type: string
+    default: AUTO
+
+  - name: managedDevOpsPoolLocation
+    displayName: Managed DevOps Pool Location
+    type: string
+    default: REPLACE_WITH_AZURE_REGION
+
+  - name: managedDevOpsPoolVmSku
+    displayName: Managed DevOps Pool VM SKU
+    type: string
+    default: Standard_D2ads_v5
+
+  - name: managedDevOpsPoolImage
+    displayName: Managed DevOps Pool Image
+    type: string
+    default: ubuntu-24.04
+
+  - name: managedDevOpsPoolMaximumConcurrency
+    displayName: Managed DevOps Pool Maximum Concurrency
+    type: number
+    default: 2
+
+  - name: platformVirtualNetworkName
+    displayName: Platform Virtual Network Name
+    type: string
+    default: AUTO
+
+  - name: platformVnetAddressPrefix
+    displayName: Platform VNet Address Prefix
+    type: string
+    default: 10.20.0.0/16
+
+  - name: managedDevOpsPoolSubnetAddressPrefix
+    displayName: Managed DevOps Pool Subnet Address Prefix
+    type: string
+    default: 10.20.1.0/24
+
+  - name: privateEndpointSubnetAddressPrefix
+    displayName: Private Endpoint Subnet Address Prefix
+    type: string
+    default: 10.20.2.0/24
+
+  - name: terraformStateStorageAccountName
+    displayName: Terraform State Storage Account Name
+    type: string
+    default: REPLACE_WITH_GLOBALLY_UNIQUE_STORAGE_NAME
+
+  - name: terraformStateContainerName
+    displayName: Terraform State Container Name
+    type: string
+    default: default
+
+  - name: devCenterProjectResourceId
+    displayName: Dev Center Project Resource ID
+    type: string
+    default: REPLACE_WITH_DEV_CENTER_PROJECT_RESOURCE_ID
+
 stages:
   - stage: InitialiseProject
     displayName: Initialise Project
@@ -76,7 +183,31 @@ stages:
               targetType: "filePath"
               filePath: ${{ parameters.mlopsRepoName }}/.azuredevops/scripts/initialise_repo.sh
               arguments: >
-                ${{ parameters.repoName }} ${{ parameters.projectType }} ${{ parameters.mlopsVersion }} ${{ parameters.mlOpsProjectRepoName }} ${{ parameters.infrastructure_version}}
+                "${{ parameters.repoName }}"
+                "${{ parameters.projectType }}"
+                "${{ parameters.mlopsVersion }}"
+                "${{ parameters.mlOpsProjectRepoName }}"
+                "${{ parameters.infrastructure_version }}"
+                "${{ parameters.networkMode }}"
+                "${{ parameters.deploymentEnvironment }}"
+                "${{ parameters.variableGroupName }}"
+                "${{ parameters.mlopsTemplatesRef }}"
+                "${{ parameters.platformServiceConnection }}"
+                "${{ parameters.workloadServiceConnection }}"
+                "${{ parameters.managedDevOpsPoolName }}"
+                "${{ parameters.managedDevOpsPoolAlias }}"
+                "${{ parameters.managedDevOpsPoolResourceGroup }}"
+                "${{ parameters.managedDevOpsPoolLocation }}"
+                "${{ parameters.managedDevOpsPoolVmSku }}"
+                "${{ parameters.managedDevOpsPoolImage }}"
+                "${{ parameters.managedDevOpsPoolMaximumConcurrency }}"
+                "${{ parameters.platformVirtualNetworkName }}"
+                "${{ parameters.platformVnetAddressPrefix }}"
+                "${{ parameters.managedDevOpsPoolSubnetAddressPrefix }}"
+                "${{ parameters.privateEndpointSubnetAddressPrefix }}"
+                "${{ parameters.terraformStateStorageAccountName }}"
+                "${{ parameters.terraformStateContainerName }}"
+                "${{ parameters.devCenterProjectResourceId }}"
 
 
           - task: Bash@3
@@ -85,7 +216,12 @@ stages:
               targetType: "filePath"
               filePath: ${{ parameters.mlopsRepoName }}/.azuredevops/scripts/create_ado_pipelines.sh
               arguments: >
-                ${{ parameters.repoName }} ${{ parameters.adoProjectName }}
+                "${{ parameters.repoName }}"
+                "${{ parameters.adoProjectName }}"
+                "${{ parameters.networkMode }}"
+                "${{ parameters.deploymentEnvironment }}"
+                "${{ parameters.projectType }}"
+                "${{ parameters.mlopsVersion }}"
 
             env:
               AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
