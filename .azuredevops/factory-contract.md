@@ -94,22 +94,24 @@ Its private defaults are VNet `10.20.0.0/16`, Managed DevOps Pool subnet
 concurrency `2`.
 
 The contract was validated against `mlops-templates` commit
-`29ceabeb9d282f986a644c7e9de10bba41caaa71`, which normalizes and validates
+`bf38cd9d82f141cbc1518beb361b7d314194c643`, which normalizes and validates
 Terraform boolean parameters before planning and uses `TerraformInstaller@1`
-to avoid the retired Node 10 task runtime. Its documentation uses Terraform
-CLI 1.16.2; this documentation-only revision does not change the reusable
-interfaces or runtime behavior. The factory defaults to `refs/heads/main` for
-the current smooth path; set `mlopsTemplatesRef` to a commit SHA when
+to avoid the retired Node 10 task runtime. Its
+`resolve-terraform-version.yml` template resolves `latest`, exact `x.y.z`,
+and wildcard `x.y.x` requests to an available Terraform release; its
+documentation uses `1.16.x`. The factory defaults to `refs/heads/main` for the
+current smooth path; set `mlopsTemplatesRef` to a commit SHA when
 reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`d6b6a6a5834168cc3309d213a18ae893d77b4a11`, including the live-proven
+`bb78edd4cb7ac9f8a55649e34c914272a9a03825`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
 v2.12.0 and orders workspace outputs and compute after the identity-mode
-update. Its Azure DevOps Terraform pipelines pin Terraform CLI 1.16.2.
+update. Its Azure DevOps Terraform pipelines request the latest stable
+Terraform CLI release in the 1.16 line with `terraform_version: 1.16.x`.
 
 The hardened state storage account has public network access disabled, shared
 key access disabled, and default OAuth authentication enabled. The state
