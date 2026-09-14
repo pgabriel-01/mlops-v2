@@ -102,7 +102,9 @@ commit SHA when reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`cce799dd5bdef21662c0d3aedfca25f68607665f`.
+`94b0e2f9345d983d1a98b4127c593b5ad8dcf60a`, including the live-proven
+Data Explorer `Standard_E2ads_v5` capacity and Key Vault RBAC propagation
+dependency.
 
 The hardened state storage account has public network access disabled, shared
 key access disabled, and default OAuth authentication enabled. The state
