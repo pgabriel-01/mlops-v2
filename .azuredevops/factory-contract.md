@@ -94,11 +94,13 @@ Its private defaults are VNet `10.20.0.0/16`, Managed DevOps Pool subnet
 concurrency `2`.
 
 The contract was validated against `mlops-templates` commit
-`a36e5106cf68e7495b1c840180b2281ae5e41282`, which normalizes and validates
+`29ceabeb9d282f986a644c7e9de10bba41caaa71`, which normalizes and validates
 Terraform boolean parameters before planning and uses `TerraformInstaller@1`
-to avoid the retired Node 10 task runtime. The factory defaults to
-`refs/heads/main` for the current smooth path; set `mlopsTemplatesRef` to a
-commit SHA when reproducibility is preferred.
+to avoid the retired Node 10 task runtime. Its documentation uses Terraform
+CLI 1.16.2; this documentation-only revision does not change the reusable
+interfaces or runtime behavior. The factory defaults to `refs/heads/main` for
+the current smooth path; set `mlopsTemplatesRef` to a commit SHA when
+reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
