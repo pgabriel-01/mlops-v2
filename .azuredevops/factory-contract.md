@@ -102,9 +102,12 @@ commit SHA when reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`94b0e2f9345d983d1a98b4127c593b5ad8dcf60a`, including the live-proven
-Data Explorer `Standard_E2ads_v5` capacity and Key Vault RBAC propagation
-dependency.
+`e9dbc4491c8f27b2452274c7f939f156d9da2ead`, including the live-proven
+Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
+dependency, and identity-authenticated AML system datastores. The latter uses
+`Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
+v2.12.0 and orders workspace outputs and compute after the identity-mode
+update.
 
 The hardened state storage account has public network access disabled, shared
 key access disabled, and default OAuth authentication enabled. The state
