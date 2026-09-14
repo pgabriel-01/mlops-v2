@@ -104,12 +104,12 @@ reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`e9dbc4491c8f27b2452274c7f939f156d9da2ead`, including the live-proven
+`d6b6a6a5834168cc3309d213a18ae893d77b4a11`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
 v2.12.0 and orders workspace outputs and compute after the identity-mode
-update.
+update. Its Azure DevOps Terraform pipelines pin Terraform CLI 1.16.2.
 
 The hardened state storage account has public network access disabled, shared
 key access disabled, and default OAuth authentication enabled. The state
