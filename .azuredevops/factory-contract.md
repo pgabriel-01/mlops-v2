@@ -105,16 +105,18 @@ reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`c697bcc332bf351bc789a72e555c6e313b89854d`, including the live-proven
+`ec0fbf1a87f5f2313c6cf22d2734c6024235bc6d`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
 v2.12.0 to conditionally set both system datastore identity authentication
 and managed-network `AllowInternetOutbound`, avoiding a ForceNew AzureRM
-workspace block. Workspace outputs and compute are ordered after this update.
-Its Azure DevOps Terraform pipelines request the latest stable Terraform CLI
-release in the 1.16 line with `terraform_version: 1.16.x`. Compute remains off
-the user subnet with node public IPs disabled. The online pipeline selects a
+workspace block. Private mode then invokes `provisionManagedNetwork` with
+Spark provisioning disabled after the workspace update and private endpoint;
+compute waits for the update, endpoint, and provisioning action. Its Azure
+DevOps Terraform pipelines request the latest stable Terraform CLI release in
+the 1.16 line with `terraform_version: 1.16.x`. Compute remains off the user
+subnet with node public IPs disabled. The online pipeline selects a
 disabled-egress deployment for private environments and the enabled-egress
 definition for public DEV.
 Online deployments use `Standard_D2ds_v5`, and Azure DevOps batch deployments
