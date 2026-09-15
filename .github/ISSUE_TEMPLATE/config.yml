@@ -1,4 +1,5 @@
 blank_issues_enabled: false
+contact_links:
   - name: Azure ML CLI issues.
     url: https://github.com/azure/azure-cli-extensions/issues/new/choose
     about: Please open issues with the Azure ML CLI extension here.
