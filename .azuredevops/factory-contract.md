@@ -106,7 +106,7 @@ commit SHA when reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`63c5091f9a9b6e000732a1977218c8952dc637dd`, including the live-proven
+`92f4d03f3c856123f415c4f585975b376f531f78`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
@@ -114,15 +114,17 @@ v2.12.0 to conditionally set both system datastore identity authentication
 and managed-network `AllowInternetOutbound`, avoiding a ForceNew AzureRM
 workspace block. Private mode then invokes `provisionManagedNetwork` with
 Spark provisioning disabled after the workspace update, private endpoint,
-and a 120-second RBAC propagation barrier. Both the AML user-assigned identity
-and workspace system-assigned identity receive Azure AI Enterprise Network
-Connection Approver at workload resource-group scope before the barrier.
-Compute waits for the update, endpoint, and provisioning action. Its Azure
-DevOps Terraform pipelines request the latest stable Terraform CLI release
-in the 1.16 line with `terraform_version: 1.16.x`. Compute remains off the
-user subnet with node public IPs disabled. The online pipeline selects a
-disabled-egress deployment for private environments and the enabled-egress
-definition for public DEV.
+and a contract-tracked 120-second RBAC propagation barrier. Both the AML
+user-assigned identity and workspace system-assigned identity receive Azure
+AI Enterprise Network Connection Approver on storage, Key Vault, and
+container registry, plus Reader on the container registry. The barrier tracks
+all eight assignments and the sorted target-resource contract rather than a
+resource-group role. Compute waits for the update, endpoint, and provisioning
+action. Its Azure DevOps Terraform pipelines request the latest stable
+Terraform CLI release in the 1.16 line with `terraform_version: 1.16.x`.
+Compute remains off the user subnet with node public IPs disabled. The online
+pipeline selects a disabled-egress deployment for private environments and
+the enabled-egress definition for public DEV.
 Online deployments use `Standard_D2ds_v5`, and Azure DevOps batch deployments
 reuse `azureml:cpu-cluster` rather than creating a separate compute.
 
