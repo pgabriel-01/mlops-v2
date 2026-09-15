@@ -105,13 +105,15 @@ reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`bb78edd4cb7ac9f8a55649e34c914272a9a03825`, including the live-proven
+`55ef815547be6706fd03f00a56f7fa3e61a97069`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
 v2.12.0 and orders workspace outputs and compute after the identity-mode
 update. Its Azure DevOps Terraform pipelines request the latest stable
 Terraform CLI release in the 1.16 line with `terraform_version: 1.16.x`.
+Private AML compute is attached to the training subnet and has node public IP
+addresses disabled; public mode retains the platform defaults.
 
 The hardened state storage account has public network access disabled, shared
 key access disabled, and default OAuth authentication enabled. The state
