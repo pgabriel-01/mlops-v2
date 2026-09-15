@@ -106,7 +106,7 @@ commit SHA when reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`9135241febabb26390582c13ca275de49dbbe4eb`, including the live-proven
+`70f9cb2c1c32cbfbe0ca219bad89b688e1aaf04d`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
@@ -128,6 +128,9 @@ pipeline selects a managed-VNet deployment definition without the unsupported
 public DEV definition may retain enabled public egress.
 Online deployments use `Standard_D2ds_v5`, and Azure DevOps batch deployments
 reuse `azureml:cpu-cluster` rather than creating a separate compute.
+Training and model-registration MLflow environments include
+`azureml-ai-monitoring==1.0.0` immediately after `mlflow==2.22.4` so generated
+scoring scripts can import Azure ML monitoring support.
 
 The hardened state storage account has public network access disabled, shared
 key access disabled, and default OAuth authentication enabled. The state
