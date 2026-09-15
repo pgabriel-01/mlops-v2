@@ -106,7 +106,7 @@ commit SHA when reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`92f4d03f3c856123f415c4f585975b376f531f78`, including the live-proven
+`9135241febabb26390582c13ca275de49dbbe4eb`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
@@ -123,8 +123,9 @@ resource-group role. Compute waits for the update, endpoint, and provisioning
 action. Its Azure DevOps Terraform pipelines request the latest stable
 Terraform CLI release in the 1.16 line with `terraform_version: 1.16.x`.
 Compute remains off the user subnet with node public IPs disabled. The online
-pipeline selects a disabled-egress deployment for private environments and
-the enabled-egress definition for public DEV.
+pipeline selects a managed-VNet deployment definition without the unsupported
+`egress_public_network_access` property for private environments; the direct
+public DEV definition may retain enabled public egress.
 Online deployments use `Standard_D2ds_v5`, and Azure DevOps batch deployments
 reuse `azureml:cpu-cluster` rather than creating a separate compute.
 
