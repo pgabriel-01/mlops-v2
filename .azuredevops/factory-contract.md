@@ -94,7 +94,7 @@ Its private defaults are VNet `10.20.0.0/16`, Managed DevOps Pool subnet
 concurrency `2`.
 
 The contract was validated against `mlops-templates` commit
-`b99bfea0a2f29803a365b871d6d0fd1bdab7049f`, which normalizes and validates
+`8efc772476c1cbd7f7010ca1b00801229f897d4b`, which normalizes and validates
 Terraform boolean parameters before planning and uses `TerraformInstaller@1`
 to avoid the retired Node 10 task runtime. Its
 `resolve-terraform-version.yml` template resolves `latest`, exact `x.y.z`,
@@ -102,13 +102,16 @@ and wildcard `x.y.x` requests to an available Terraform release; installer
 display names avoid unresolved runtime macros without changing resolver or
 task inputs. Generic online and batch deployment operations first inspect the
 existing deployment, then update or create it so reruns are idempotent. Its
-documentation uses `1.16.x`. The factory defaults to `refs/heads/main` for the
-current smooth path; set `mlopsTemplatesRef` to a commit SHA when
+test operation exports `AZURE_STORAGE_AUTH_MODE=login` before online or batch
+invocation so registered or URI-based storage inputs use keyless
+authentication. Its documentation uses `1.16.x`. The factory defaults to
+`refs/heads/main` for the current smooth path; set `mlopsTemplatesRef` to a
+commit SHA when
 reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`645a9e3a57a8be799d2a4c6fadc5e193f2e6fd78`, including the live-proven
+`4814bae8051a0f600054630873253f0498546d41`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
