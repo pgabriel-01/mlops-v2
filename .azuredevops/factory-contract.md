@@ -94,7 +94,7 @@ Its private defaults are VNet `10.20.0.0/16`, Managed DevOps Pool subnet
 concurrency `2`.
 
 The contract was validated against `mlops-templates` commit
-`8efc772476c1cbd7f7010ca1b00801229f897d4b`, which normalizes and validates
+`bef2c0256c932aaa89f6a874335983ed32cb2467`, which normalizes and validates
 Terraform boolean parameters before planning and uses `TerraformInstaller@1`
 to avoid the retired Node 10 task runtime. Its
 `resolve-terraform-version.yml` template resolves `latest`, exact `x.y.z`,
@@ -111,7 +111,7 @@ reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`4814bae8051a0f600054630873253f0498546d41`, including the live-proven
+`80be1ccc228b03d6a0b2e773e878deeb5e84ebd2`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
@@ -140,7 +140,11 @@ neutral `eastus`, `mlopsv2`, `0001`, and disabled-monitoring defaults; reusable
 template documentation uses placeholders rather than consumer-specific Azure
 DevOps or Azure resource values. Batch deployment testing consumes the
 registered `azureml:taxi-data@latest` asset rather than uploading a local data
-path.
+path. Private storage connectivity includes Blob, File, Queue, and Table
+private endpoints and DNS links. Both AML workspace identities receive Storage
+Queue Data Contributor and Storage Table Data Contributor, and the AML managed
+network has outbound private-endpoint rules for the queue and table storage
+subresources.
 
 The hardened state storage account has public network access disabled, shared
 key access disabled, and default OAuth authentication enabled. The state
