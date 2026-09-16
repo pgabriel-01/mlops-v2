@@ -307,10 +307,27 @@ Use two independent identities:
   `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, or the
   environment federated credentials.
 
-Grant the GitHub App only the permissions required by the supported ARC version
-to register and manage self-hosted runners. Prefer repository installation for
-a single project. Use organization installation only when one centrally managed
-scale set intentionally serves multiple repositories.
+Follow the permissions documented for the installed ARC version.
+[GitHub's ARC authentication guidance](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/authenticate-to-the-api)
+currently requires:
+
+- Repository-scoped registration: repository **Administration: read and write**
+  and **Metadata: read-only**.
+- Organization-scoped registration: organization **Self-hosted runners: read and
+  write**; repository Administration is not required solely for organization
+  registration.
+
+Prefer repository scope for a single project. Use organization scope only when
+one centrally managed scale set intentionally serves multiple repositories.
+GitHub's documented GitHub App flow assumes an organization-owned App. For a
+repository owned by a personal account, confirm that the intended App ownership
+and installation can register repository-scoped ARC runners before provisioning
+AKS; moving the repository to an organization is safer than falling back to a
+long-lived personal access token.
+
+Create the ARC `githubConfigSecret` reference in the same namespace as the
+runner scale-set Helm release. Prefer an approved external-secret integration
+over copying the private key into source-controlled Helm values.
 
 ### Runner scale-set contract
 
@@ -326,6 +343,8 @@ scale set intentionally serves multiple repositories.
   jobs.
 - Apply Kubernetes resource requests/limits, node-pool maximums, and Azure quota
   checks consistently with the ARC maximum.
+- Export controller, listener, runner, and `_diag` logs to an external log store;
+  ephemeral runner diagnostics disappear when their pods are deleted.
 
 ### Private network, DNS, and egress prerequisites
 
