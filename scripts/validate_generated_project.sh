@@ -4,7 +4,7 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-ff0c23a99192fd9f500dcd6666a62511c4120313}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-c9f7c7a1f62d1a71488b931a5f7ae83f13ee22df}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-be9755ccfc320fd1f2c1fb4f6b092d745d4fa6b5}
 
@@ -36,6 +36,8 @@ require_path "mlops/scripts/project_config.py"
 require_path "mlops/scripts/render_bicep_parameters.py"
 require_path "mlops/scripts/validate_project.py"
 require_path "infrastructure/main.bicep"
+require_path "infrastructure/modules/aml_computecluster.bicep"
+require_path "infrastructure/modules/aml_workspace.bicep"
 require_path "infrastructure/modules/key_vault.bicep"
 require_path "infrastructure/modules/private_dns_zone_vnet_link.bicep"
 require_path "infrastructure/modules/private_dns_zones.bicep"
@@ -195,6 +197,43 @@ if ! grep -Fq 'sharedPrivateDnsZoneResourceIds object = {}' "$project_dir/infras
   ! grep -Eq "resource privateDnsZone .* existing = " "$project_dir/infrastructure/modules/private_dns_zone_vnet_link.bicep"; then
   fail "Private DNS deployment must reuse configured zones and manage workload VNet links"
 fi
+
+python3 - "$project_dir/infrastructure/main.bicep" \
+  "$project_dir/infrastructure/modules/aml_workspace.bicep" <<'PY' || failures=$((failures + 1))
+import sys
+from pathlib import Path
+
+main_path, workspace_path = map(Path, sys.argv[1:])
+main = main_path.read_text(encoding="utf-8")
+workspace = workspace_path.read_text(encoding="utf-8")
+
+errors = []
+if "managedNetwork:" not in workspace:
+    errors.append("AML workspace must retain managedNetwork")
+if "serverlessComputeSettings" in workspace:
+    errors.append("AML workspace must not set serverlessComputeSettings")
+if "computeSubnetId" in workspace:
+    errors.append("AML workspace module must not accept computeSubnetId")
+
+mlw_start = main.find("module mlw './modules/aml_workspace.bicep'")
+mlw_end = main.find("module peMlw ", mlw_start)
+if mlw_start == -1 or mlw_end == -1:
+    errors.append("AML workspace module invocation was not found")
+elif "computeSubnetId" in main[mlw_start:mlw_end]:
+    errors.append("AML workspace invocation must not pass computeSubnetId")
+
+mlwcc_start = main.find("module mlwcc './modules/aml_computecluster.bicep'")
+mlwcc_end = main.find("module amlReg ", mlwcc_start)
+if mlwcc_start == -1 or mlwcc_end == -1:
+    errors.append("AML compute cluster module invocation was not found")
+elif "subnetId: enableVNet ? vnet!.outputs.computeSubnetId : ''" not in main[mlwcc_start:mlwcc_end]:
+    errors.append("AML compute cluster must retain the compute subnet")
+
+if errors:
+    for error in errors:
+        print(f"ERROR: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 if [ "$failures" -ne 0 ]; then
   echo "Generated project validation failed with $failures error(s)." >&2
