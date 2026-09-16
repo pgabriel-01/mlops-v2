@@ -280,6 +280,101 @@ If using WSL, complete all setup within the Unix environment:
 
    The GitHub configuration is complete.
 
+## Bootstrap Private Autoscaling GitHub Actions Runners
+
+Private-network deployments require runner capacity that exists before the
+generated Azure ML workflows can run. For autoscaling private runners, deploy a
+dedicated private AKS cluster with GitHub Actions Runner Controller (ARC) and an
+ARC runner scale set as a separately owned bootstrap layer.
+
+The generated MLOps project does not create or update its own prerequisite AKS
+cluster, ARC installation, or GitHub App. Keep that bootstrap lifecycle separate
+so a failed workload deployment cannot remove the runner that is needed to
+repair or delete the workload.
+
+### Authentication boundaries
+
+Use two independent identities:
+
+- **ARC to GitHub**: Install a least-privilege GitHub App on only the repositories
+  or organization resources that the runner scale set serves. Store its App ID,
+  installation ID, and private key in the bootstrap platform's approved secret
+  store and expose them to ARC through a Kubernetes Secret or an external
+  secrets integration. Do not put the private key, a personal access token, or
+  installation credentials in the generated repository.
+- **Workflow to Azure**: Continue to use the GitHub Environment OIDC
+  configuration from Step 5. ARC registration credentials do not replace
+  `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, or the
+  environment federated credentials.
+
+Grant the GitHub App only the permissions required by the supported ARC version
+to register and manage self-hosted runners. Prefer repository installation for
+a single project. Use organization installation only when one centrally managed
+scale set intentionally serves multiple repositories.
+
+### Runner scale-set contract
+
+- Configure the ARC runner scale-set name/label to match the generated project
+  runner setting, such as `mlops-private`.
+- Set an explicit `maxRunners` value to bound concurrency, Azure VM consumption,
+  and unexpected cost.
+- `minRunners: 0` provides zero-idle scaling but adds pod and node startup
+  latency. A positive minimum reduces workflow startup time but incurs
+  continuous AKS/node cost. Record the selected minimum and maximum as an
+  operational decision rather than hard-coding them in reusable project assets.
+- Use ephemeral runner pods and do not reuse a job workspace between workflow
+  jobs.
+- Apply Kubernetes resource requests/limits, node-pool maximums, and Azure quota
+  checks consistently with the ARC maximum.
+
+### Private network, DNS, and egress prerequisites
+
+Place ARC runner nodes in a dedicated, nondelegated subnet. Do not reuse a
+subnet delegated to Azure DevOps Managed DevOps Pools or a private-endpoint
+subnet. The runner and generated workload address spaces must not overlap.
+
+Before validation or deployment, provide:
+
+1. Bidirectional routing between the runner VNet and generated workload VNet.
+   With VNet peering, both the workload-to-hub and hub-to-workload peerings must
+   exist. Define which deployment owns each direction; do not have independent
+   deployments create the same peering.
+2. Virtual network links from the Azure ML private DNS zones to the runner VNet.
+   This includes Azure ML API and notebooks, Storage blob/file/queue/table/dfs,
+   Key Vault, and Azure Container Registry zones. DNS link registration must be
+   disabled.
+3. Controlled outbound DNS and HTTPS connectivity for the GitHub API and Actions
+   service, GitHub Container Registry when used, Microsoft Entra ID, Azure
+   Resource Manager and required Azure service control planes, AKS image sources,
+   configured Python/package feeds, and workload container registries.
+4. No public inbound management path to the runner nodes. Administer AKS through
+   approved private connectivity and Azure control-plane mechanisms.
+
+The generated Bicep pattern exposes `runner_hub_vnet_resource_id`, which is empty
+by default. When set in consumer configuration, the workload deployment owns the
+workload-to-hub peering and links its private DNS zones to that VNet. The
+`manage_runner_hub_to_workload_peering` setting is `false` by default: the hub
+owner must create the reciprocal peering separately. Set it to `true` only when
+the workload deployment identity has approved write access to the hub VNet scope
+and this deployment is the single owner of that peering.
+
+Reusable factory and project-template assets must not contain tenant IDs,
+subscription IDs, repository names, VNet IDs, or other live environment values.
+
+### Bootstrap validation gate
+
+Do not dispatch the workload infrastructure workflow until all of the following
+are true:
+
+1. GitHub reports an online runner for the repository with the configured ARC
+   scale-set label.
+2. A runner job can obtain a GitHub Environment OIDC token and authenticate to
+   the intended Azure subscription.
+3. From the runner network, Azure Resource Manager is reachable and the expected
+   Azure ML, Storage, Key Vault, and ACR private names resolve through the private
+   path.
+4. The generated Bicep validates with deployment disabled.
+
 ## Deploy Machine Learning Project Infrastructure Using GitHub Actions
 
 1. **Configure Azure ML Environment Parameters**
@@ -631,6 +726,25 @@ The following Terraform destroy example applies only to generated Terraform
 patterns. The Python SDK v2 + GitHub Actions + Bicep pattern does not currently
 generate a destroy workflow; use an explicitly reviewed Azure deletion process
 for that pattern.
+
+For private AKS + ARC deployments, treat workload cleanup and runner-platform
+cleanup as separate operations:
+
+1. Stop new workflow dispatches and allow or cancel queued and active jobs.
+2. Remove Azure ML online and batch deployments/endpoints before deleting the
+   workspace or workload resource group.
+3. Remove workload-owned private DNS links and both directions of VNet peering
+   according to the documented ownership contract.
+4. Delete the workload infrastructure and verify that its resource groups and
+   managed resource groups are gone.
+5. Keep AKS/ARC available while other workloads still use the runner scale set.
+   Only when the bootstrap platform is no longer shared or required, set the
+   runner scale set minimum and maximum to zero, verify that ephemeral runners
+   are gone from GitHub, uninstall the ARC scale set/controller, remove its
+   GitHub App credential material, and then delete the dedicated AKS resources.
+6. Revoke or uninstall the GitHub App when it no longer serves any repository.
+   Removing Azure workload OIDC federated credentials is a separate identity
+   cleanup decision.
 
 When you need to tear down a Terraform development or production environment:
 

@@ -65,6 +65,12 @@ if grep -R -I -q \
   fail "Local paths or credential-shaped values remain"
 fi
 
+if grep -R -I -E -q \
+  '/subscriptions/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/resourceGroups/' \
+  "$project_dir" --exclude-dir=.git; then
+  fail "A live Azure resource ID remains in the generated project"
+fi
+
 if ! grep -Eq '"project_template_commit": "[0-9a-f]{40}"' "$project_dir/.mlops-generation.json"; then
   fail "Project template provenance is not pinned to a full commit SHA"
 fi
