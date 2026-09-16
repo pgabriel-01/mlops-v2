@@ -76,6 +76,12 @@ if find "$selected_project_path" -maxdepth 1 -type f -name 'config-infra-*.yml' 
     -exec mv {} . \;
 fi
 
+if [ -f "$selected_project_path/README.md" ]; then
+  mv "$selected_project_path/README.md" README.md
+fi
+
+rm -rf "$project_type"
+
 mv "infrastructure/$infrastructure_version" "$infrastructure_version"
 rm -rf infrastructure
 mv "$infrastructure_version" infrastructure

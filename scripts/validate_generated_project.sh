@@ -35,6 +35,10 @@ require_path "config-infra-dev.yml"
 require_path "config-infra-test.yml"
 require_path "config-infra-prod.yml"
 
+if [ -e "$project_dir/classical" ] || [ -e "$project_dir/cv" ] || [ -e "$project_dir/nlp" ]; then
+  fail "Source selector directories remain in the generated project"
+fi
+
 expected_workflows=(
   "deploy-infrastructure.yml"
   "train-register-model.yml"
