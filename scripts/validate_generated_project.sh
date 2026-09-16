@@ -34,6 +34,9 @@ require_path "data-science"
 require_path "data"
 require_path "mlops/azureml"
 require_path "infrastructure/main.bicep"
+require_path "config-infra-dev.yml"
+require_path "config-infra-test.yml"
+require_path "config-infra-prod.yml"
 
 require_workflow "infrastructure"
 require_workflow "train"
@@ -70,6 +73,20 @@ if grep -R -I -E -q \
   "$project_dir" --exclude-dir=.git; then
   fail "A live Azure resource ID remains in the generated project"
 fi
+
+for environment in dev test prod; do
+  config_file="$project_dir/config-infra-$environment.yml"
+
+  if [ -f "$config_file" ]; then
+    if ! grep -Eq '^runner_hub_vnet_resource_id:[[:space:]]*(""|'\'\'')[[:space:]]*$' "$config_file"; then
+      fail "config-infra-$environment.yml must leave runner_hub_vnet_resource_id empty"
+    fi
+
+    if ! grep -Eq '^manage_runner_hub_to_workload_peering:[[:space:]]*false[[:space:]]*$' "$config_file"; then
+      fail "config-infra-$environment.yml must default reciprocal runner-hub peering ownership to false"
+    fi
+  fi
+done
 
 if ! grep -Eq '"project_template_commit": "[0-9a-f]{40}"' "$project_dir/.mlops-generation.json"; then
   fail "Project template provenance is not pinned to a full commit SHA"
