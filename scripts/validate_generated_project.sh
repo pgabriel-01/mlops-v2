@@ -4,9 +4,9 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-c9f7c7a1f62d1a71488b931a5f7ae83f13ee22df}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-05c6cec4363efd2798a786765c35c4c8adc0b228}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
-expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-be9755ccfc320fd1f2c1fb4f6b092d745d4fa6b5}
+expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8ece39b3426149e3c8708e20d12e34499818e313}
 
 if [ -z "$project_dir" ] || [ ! -d "$project_dir" ]; then
   echo "Usage: $0 <generated-project-directory>" >&2
@@ -208,8 +208,8 @@ main = main_path.read_text(encoding="utf-8")
 workspace = workspace_path.read_text(encoding="utf-8")
 
 errors = []
-if "managedNetwork:" not in workspace:
-    errors.append("AML workspace must retain managedNetwork")
+if "managedNetwork" in workspace:
+    errors.append("AML workspace must use the custom VNet path without managedNetwork")
 if "serverlessComputeSettings" in workspace:
     errors.append("AML workspace must not set serverlessComputeSettings")
 if "computeSubnetId" in workspace:
@@ -228,12 +228,33 @@ if mlwcc_start == -1 or mlwcc_end == -1:
     errors.append("AML compute cluster module invocation was not found")
 elif "subnetId: enableVNet ? vnet!.outputs.computeSubnetId : ''" not in main[mlwcc_start:mlwcc_end]:
     errors.append("AML compute cluster must retain the compute subnet")
+elif "dependsOn: [\n    peMlw\n  ]" not in main[mlwcc_start:mlwcc_end]:
+    errors.append("AML compute cluster must explicitly depend on the workspace private endpoint")
 
 if errors:
     for error in errors:
         print(f"ERROR: {error}", file=sys.stderr)
     raise SystemExit(1)
 PY
+
+expected_workflow_source="$expected_mlops_templates_repository/.github/workflows/python-sdk-v2-"
+workflow_source_count=$(grep -R -I -F -h "uses: $expected_workflow_source" \
+  "$project_dir/.github/workflows"/*.yml | wc -l | tr -d ' ')
+if [ "$workflow_source_count" -ne 3 ]; then
+  fail "Expected three Python SDK v2 reusable workflows from $expected_mlops_templates_repository"
+fi
+
+if grep -R -I -F -h "uses: $expected_workflow_source" \
+  "$project_dir/.github/workflows"/*.yml |
+  grep -F -v -q "@$expected_mlops_templates_ref"; then
+  fail "Python SDK v2 reusable workflows are not pinned to $expected_mlops_templates_ref"
+fi
+
+sdk_ref_count=$(grep -R -I -F -h "sdk_ref: $expected_mlops_templates_ref" \
+  "$project_dir/.github/workflows"/*.yml | wc -l | tr -d ' ')
+if [ "$sdk_ref_count" -ne 3 ]; then
+  fail "Expected three Python SDK v2 SDK checkouts pinned to $expected_mlops_templates_ref"
+fi
 
 if [ "$failures" -ne 0 ]; then
   echo "Generated project validation failed with $failures error(s)." >&2
