@@ -4,9 +4,9 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-05c6cec4363efd2798a786765c35c4c8adc0b228}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-164e880c0c01df9d81b539a26d11fbb55a86c6b0}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
-expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8ece39b3426149e3c8708e20d12e34499818e313}
+expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8dbe32cab29268ef128ece88ef994927648fc70f}
 
 if [ -z "$project_dir" ] || [ ! -d "$project_dir" ]; then
   echo "Usage: $0 <generated-project-directory>" >&2
@@ -35,8 +35,17 @@ require_path "mlops/scripts/export_config.py"
 require_path "mlops/scripts/project_config.py"
 require_path "mlops/scripts/render_bicep_parameters.py"
 require_path "mlops/scripts/validate_project.py"
+require_path "mlops/azureml/deploy/batch/score.py"
+require_path "mlops/online-runtime/Dockerfile"
+require_path "mlops/online-runtime/requirements.txt"
 require_path "infrastructure/main.bicep"
+require_path "infrastructure/manifests/azureml-inference-namespace.yaml"
+require_path "infrastructure/modules/aks_aml_inference.bicep"
+require_path "infrastructure/modules/aks_run_command_role.bicep"
 require_path "infrastructure/modules/aml_computecluster.bicep"
+require_path "infrastructure/modules/aml_environment.bicep"
+require_path "infrastructure/modules/aml_kubernetes_compute.bicep"
+require_path "infrastructure/modules/aml_kubernetes_identity.bicep"
 require_path "infrastructure/modules/aml_workspace.bicep"
 require_path "infrastructure/modules/key_vault.bicep"
 require_path "infrastructure/modules/private_dns_zone_vnet_link.bicep"
@@ -60,6 +69,7 @@ expected_workflows=(
   "deploy-infrastructure.yml"
   "train-register-model.yml"
   "deploy-online-endpoint.yml"
+  "publish-online-runtime.yml"
   "deploy-batch-endpoint.yml"
   "runner-smoke-test.yml"
 )
@@ -70,7 +80,7 @@ done
 
 workflow_count=$(find "$project_dir/.github/workflows" -maxdepth 1 -type f -name '*.yml' | wc -l | tr -d ' ')
 if [ "$workflow_count" -ne "${#expected_workflows[@]}" ]; then
-  fail "Expected only the six selected Python SDK v2 GitHub workflows; found $workflow_count"
+  fail "Expected only the seven selected Python SDK v2 GitHub workflows; found $workflow_count"
 fi
 
 if find "$project_dir" -path "$project_dir/.git" -prune -o \
@@ -103,6 +113,50 @@ fi
 if ! grep -R -I -q 'mlops/azureml/train/job\.yml' "$project_dir/.github/workflows"; then
   fail "Generated training workflow does not reference mlops/azureml/train/job.yml"
 fi
+
+if ! grep -Fq 'scoring_code_directory: mlops/azureml/deploy/batch' \
+  "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
+  ! grep -Fq 'scoring_script: score.py' \
+    "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
+  ! grep -Fq 'request_batch_file: data/taxi-batch.csv' \
+    "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
+  ! grep -Fq 'default: azureml://registries/azureml/environments/sklearn-1.5/versions/53' \
+    "$project_dir/.github/workflows/deploy-batch-endpoint.yml"; then
+  fail "Batch workflow must provide checked-in scoring code, live input, and the immutable curated environment"
+fi
+
+python3 - "$project_dir/mlops/azureml/deploy/batch/score.py" <<'PY' || failures=$((failures + 1))
+import ast
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+tree = ast.parse(path.read_text(encoding="utf-8"))
+functions = {
+    node.name: node
+    for node in tree.body
+    if isinstance(node, ast.FunctionDef)
+}
+source = path.read_text(encoding="utf-8")
+errors = []
+if "init" not in functions or "run" not in functions:
+    errors.append("batch scoring source must define init() and run(mini_batch)")
+for required in (
+    "AZUREML_MODEL_DIR",
+    "mlflow.pyfunc.load_model",
+    "pd.read_csv",
+    "pd.read_parquet",
+    "pd.concat",
+    "if not mini_batch",
+    "if result.empty",
+):
+    if required not in source:
+        errors.append(f"batch scoring source is missing {required}")
+if errors:
+    for error in errors:
+        print(f"ERROR: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 if grep -R -I -q \
   -e '/Users/' \
@@ -198,6 +252,45 @@ if ! grep -Fq 'sharedPrivateDnsZoneResourceIds object = {}' "$project_dir/infras
   fail "Private DNS deployment must reuse configured zones and manage workload VNet links"
 fi
 
+if ! grep -Fq "resource trustedAccess 'Microsoft.ContainerService/managedClusters/trustedAccessRoleBindings@" \
+  "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
+  ! grep -Fq "'Microsoft.MachineLearningServices/workspaces/mlworkload'" \
+    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
+  ! grep -Fq "allowInsecureConnections: 'False'" \
+    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
+  ! grep -Fq 'sslCertPemFile: extensionTlsCertPem' \
+    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
+  ! grep -Fq 'sslKeyPemFile: extensionTlsKeyPem' \
+    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
+  ! grep -Fq "kind: 'AzureCLI'" \
+    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
+  ! grep -Fq 'az aks command invoke' \
+    "$project_dir/infrastructure/modules/aks_aml_inference.bicep"; then
+  fail "Private AKS inference must retain Trusted Access, namespace bootstrap, and protected TLS configuration"
+fi
+
+if ! grep -Fq "disableLocalAuth: true" \
+  "$project_dir/infrastructure/modules/aml_kubernetes_compute.bicep" ||
+  ! grep -Fq "publicNetworkAccess: enableNetworkIsolation ? 'Disabled' : 'Enabled'" \
+    "$project_dir/infrastructure/modules/aml_workspace.bicep" ||
+  ! grep -Fq 'allowSharedKeyAccess: false' \
+    "$project_dir/infrastructure/modules/storage_account.bicep"; then
+  fail "Private AML compute, workspace networking, and storage local-auth policies changed"
+fi
+
+if ! grep -Fq 'tls_ca_key_vault_secret_id:' \
+  "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
+  ! grep -Fq 'endpoint_uami_resource_id:' \
+    "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
+  ! grep -Fq 'uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5' \
+    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
+  ! grep -Fq 'immutable_image="$login_server/mlops/online-runtime@$digest"' \
+    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
+  ! grep -Eq '^FROM .+@sha256:[0-9a-f]{64}$' \
+    "$project_dir/mlops/online-runtime/Dockerfile"; then
+  fail "Private online deployment must retain CA trust, managed identity, OIDC, and digest-pinned runtime publication"
+fi
+
 python3 - "$project_dir/infrastructure/main.bicep" \
   "$project_dir/infrastructure/modules/aml_workspace.bicep" <<'PY' || failures=$((failures + 1))
 import sys
@@ -254,6 +347,38 @@ sdk_ref_count=$(grep -R -I -F -h "sdk_ref: $expected_mlops_templates_ref" \
   "$project_dir/.github/workflows"/*.yml | wc -l | tr -d ' ')
 if [ "$sdk_ref_count" -ne 3 ]; then
   fail "Expected three Python SDK v2 SDK checkouts pinned to $expected_mlops_templates_ref"
+fi
+
+templates_checkout=$(mktemp -d "${TMPDIR:-/tmp}/mlops-templates-contract.XXXXXX")
+trap 'rm -rf "$templates_checkout"' EXIT
+if ! git -C "$templates_checkout" init -q ||
+  ! git -C "$templates_checkout" remote add origin \
+    "https://github.com/$expected_mlops_templates_repository.git" ||
+  ! git -C "$templates_checkout" fetch -q --depth 1 origin \
+    "$expected_mlops_templates_ref" ||
+  ! git -C "$templates_checkout" checkout -q FETCH_HEAD -- \
+    .github/workflows/python-sdk-v2-batch.yml \
+    .github/workflows/python-sdk-v2-online.yml \
+    src/python-sdk-v2/aml_client.py \
+    src/python-sdk-v2/create_batch_deployment.py; then
+  fail "Unable to inspect the pinned mlops-templates source contract"
+else
+  if ! grep -Fq 'CodeConfiguration' \
+    "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'verify_live_deployment(' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'refusing to invoke a deployment that could synthesize an anonymous' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'AzureCliCredential()' \
+      "$templates_checkout/src/python-sdk-v2/aml_client.py" ||
+    ! grep -Fq 'use_private_ca_bundle' \
+      "$templates_checkout/src/python-sdk-v2/aml_client.py" ||
+    ! grep -Fq 'id-token: write' \
+      "$templates_checkout/.github/workflows/python-sdk-v2-batch.yml" ||
+    ! grep -Fq 'id-token: write' \
+      "$templates_checkout/.github/workflows/python-sdk-v2-online.yml"; then
+    fail "Pinned mlops-templates source lacks explicit batch code, live verification, OIDC, or private CA contracts"
+  fi
 fi
 
 if [ "$failures" -ne 0 ]; then
