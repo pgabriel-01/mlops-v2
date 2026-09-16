@@ -4,7 +4,7 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-bcf8ef85763eb6bba165ac284ab545a10e0f1039}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-9943dcfd844947c054b9aa082ac87a498239678c}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8dbe32cab29268ef128ece88ef994927648fc70f}
 
@@ -241,6 +241,42 @@ fi
 if ! grep -Fq -- '- /home/runner/run.sh' "$project_dir/runner-bootstrap/helm/runner-set-values.yaml"; then
   fail "ARC runner image must explicitly invoke /home/runner/run.sh"
 fi
+
+python3 - "$project_dir/.github/workflows/build-runner-image.yml" <<'PY' || failures=$((failures + 1))
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+start = source.find("- name: Verify anonymous runner image pull")
+end = source.find("- name: Report immutable image", start)
+errors = []
+if start == -1 or end == -1:
+    errors.append("runner build workflow is missing the anonymous digest verification step")
+else:
+    verification = source[start:end]
+    required = (
+        'DIGEST: ${{ steps.build.outputs.digest }}',
+        'printf \'{"auths":{}}\\n\' > "$anonymous_config/config.json"',
+        'DOCKER_CONFIG="$anonymous_config"',
+        'docker buildx imagetools inspect "$IMAGE_NAME@$DIGEST"',
+        "Set the GHCR package visibility to Public, then rerun this workflow.",
+        "Do not add an imagePullSecret, PAT, or expiring token.",
+        "exit 1",
+    )
+    for contract in required:
+        if contract not in verification:
+            errors.append(f"anonymous runner verification is missing {contract}")
+    for forbidden in ("docker login", "gh auth token", "GITHUB_TOKEN", "password"):
+        if forbidden in verification:
+            errors.append(
+                f"anonymous runner verification must not use credentials: {forbidden}"
+            )
+if errors:
+    for error in errors:
+        print(f"ERROR: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 python3 - "$project_dir/runner-bootstrap/scripts/invoke_aks_command.py" <<'PY' || failures=$((failures + 1))
 import ast
