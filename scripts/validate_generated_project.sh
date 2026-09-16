@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+project_dir=${1:-}
+
+if [ -z "$project_dir" ] || [ ! -d "$project_dir" ]; then
+  echo "Usage: $0 <generated-project-directory>" >&2
+  exit 2
+fi
+
+failures=0
+
+fail() {
+  echo "ERROR: $*" >&2
+  failures=$((failures + 1))
+}
+
+require_path() {
+  if [ ! -e "$project_dir/$1" ]; then
+    fail "Missing required path: $1"
+  fi
+}
+
+require_workflow() {
+  if ! find "$project_dir/.github/workflows" -maxdepth 1 -type f -iname "*$1*.yml" -print -quit | grep -q .; then
+    fail "Missing GitHub workflow matching: *$1*.yml"
+  fi
+}
+
+require_path ".mlops-generation.json"
+require_path ".github/workflows"
+require_path "data-science"
+require_path "data"
+require_path "mlops/azureml"
+require_path "infrastructure/main.bicep"
+
+require_workflow "bicep"
+require_workflow "train"
+require_workflow "online"
+require_workflow "batch"
+
+if find "$project_dir" -path "$project_dir/.git" -prune -o \
+  \( -type d -name terraform -o -type d -name devops-pipelines -o -type f -name '*.tf' \) \
+  -print -quit | grep -q .; then
+  fail "Terraform or Azure DevOps assets remain in the generated project"
+fi
+
+if grep -R -I -q \
+  -e '__MLOPS_TEMPLATES_' \
+  -e 'AzureCLI@' \
+  -e 'Bash@' \
+  -e 'ado_service_connection' \
+  -e 'managed_devops_pool' \
+  "$project_dir" --exclude-dir=.git; then
+  fail "Unresolved placeholders or Azure DevOps-specific configuration remain"
+fi
+
+if grep -R -I -q \
+  -e '/Users/' \
+  -e '/home/' \
+  -e 'AZURE_CREDENTIALS' \
+  -e 'client[_-]\?secret[[:space:]]*[:=]' \
+  "$project_dir" --exclude-dir=.git; then
+  fail "Local paths or credential-shaped values remain"
+fi
+
+if ! grep -Eq '"project_template_commit": "[0-9a-f]{40}"' "$project_dir/.mlops-generation.json"; then
+  fail "Project template provenance is not pinned to a full commit SHA"
+fi
+
+if ! grep -Eq '"mlops_templates_git_ref": "[0-9a-f]{40}"' "$project_dir/.mlops-generation.json"; then
+  fail "Reusable workflow provenance is not pinned to a full commit SHA"
+fi
+
+if [ "$failures" -ne 0 ]; then
+  echo "Generated project validation failed with $failures error(s)." >&2
+  exit 1
+fi
+
+echo "Generated project validation passed: $project_dir"
