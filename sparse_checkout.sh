@@ -49,24 +49,31 @@ git sparse-checkout set "${sparse_paths[@]}"
 git fetch --depth 1 origin "$project_template_git_ref"
 git checkout --detach FETCH_HEAD
 project_template_commit=$(git rev-parse HEAD)
+selected_project_path="$project_type/$mlops_version"
 
 # Move files to appropiate level
-if [ -d "$project_type/$mlops_version/data-science" ]; then
-  mv "$project_type/$mlops_version/data-science" data-science
+if [ -d "$selected_project_path/data-science" ]; then
+  mv "$selected_project_path/data-science" data-science
 else
   echo "Warning: data-science directory not found"
 fi
 
-if [ -d "$project_type/$mlops_version/mlops" ]; then
-  mv "$project_type/$mlops_version/mlops" mlops
+if [ -d "$selected_project_path/mlops" ]; then
+  mv "$selected_project_path/mlops" mlops
 else
   echo "Warning: mlops directory not found"
 fi
 
-if [ -d "$project_type/$mlops_version/data" ]; then
-  mv "$project_type/$mlops_version/data" data
+if [ -d "$selected_project_path/data" ]; then
+  mv "$selected_project_path/data" data
 else
   echo "Warning: data directory not found"
+fi
+
+if find "$selected_project_path" -maxdepth 1 -type f -name 'config-infra-*.yml' -print -quit | grep -q .; then
+  rm -f config-infra-*.yml
+  find "$selected_project_path" -maxdepth 1 -type f -name 'config-infra-*.yml' \
+    -exec mv {} . \;
 fi
 
 mv "infrastructure/$infrastructure_version" "$infrastructure_version"
