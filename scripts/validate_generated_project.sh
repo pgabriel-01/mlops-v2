@@ -4,7 +4,7 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-164e880c0c01df9d81b539a26d11fbb55a86c6b0}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-2764408766819b422592c888eea8ed7742a17e8c}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8dbe32cab29268ef128ece88ef994927648fc70f}
 
@@ -284,11 +284,31 @@ if ! grep -Fq 'tls_ca_key_vault_secret_id:' \
     "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
   ! grep -Fq 'uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5' \
     "$project_dir/.github/workflows/publish-online-runtime.yml" ||
+  ! grep -Fq 'KANIKO_EXECUTOR: /kaniko/executor' \
+    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
+  ! grep -Fq 'DOCKER_CONFIG="$auth_dir" "$KANIKO_EXECUTOR"' \
+    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
+  ! grep -Fq -- '--digest-file "$digest_file"' \
+    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
+  ! grep -Fq 'if [[ "$digest" != "$built_digest" ]]' \
+    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
   ! grep -Fq 'immutable_image="$login_server/mlops/online-runtime@$digest"' \
     "$project_dir/.github/workflows/publish-online-runtime.yml" ||
+  ! grep -Eq '^FROM gcr\.io/kaniko-project/executor@sha256:[0-9a-f]{64} AS kaniko$' \
+    "$project_dir/runner-bootstrap/image/Dockerfile" ||
+  ! grep -Fq 'COPY --from=kaniko /kaniko/executor /kaniko/executor' \
+    "$project_dir/runner-bootstrap/image/Dockerfile" ||
   ! grep -Eq '^FROM .+@sha256:[0-9a-f]{64}$' \
     "$project_dir/mlops/online-runtime/Dockerfile"; then
-  fail "Private online deployment must retain CA trust, managed identity, OIDC, and digest-pinned runtime publication"
+  fail "Private online deployment must retain CA trust, managed identity, OIDC, and digest-pinned Kaniko publication"
+fi
+
+if grep -I -E -q \
+  -e '(^|[;&|[:space:]])docker[[:space:]]+(build|push|login|run)([[:space:]]|$)' \
+  -e 'az[[:space:]]+acr[[:space:]]+build([[:space:]]|$)' \
+  -e '(^|[;&|[:space:]])(sudo|buildah|apt|apt-get)([[:space:]]|$)' \
+  "$project_dir/.github/workflows/publish-online-runtime.yml"; then
+  fail "Runtime publication must remain private and daemonless without Docker, ACR Tasks, sudo, Buildah, or runtime package installation"
 fi
 
 python3 - "$project_dir/infrastructure/main.bicep" \
