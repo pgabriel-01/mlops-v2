@@ -84,18 +84,22 @@ if [[ "$orchestration" == "github-actions" ]]
 then
   echo "github-actions"
   rm -rf mlops/devops-pipelines
-  mkdir -p .github/workflows/
   if [ -d "mlops/github-actions" ]; then
+    rm -rf .github/workflows
+    mkdir -p .github/workflows/
     find mlops/github-actions -mindepth 1 -maxdepth 1 -exec mv {} .github/workflows/ \;
   else
     echo "Warning: mlops/github-actions directory not found"
+    mkdir -p .github/workflows/
   fi
   rm -rf mlops/github-actions
-  if [ -d "infrastructure/github-actions" ]; then
-    find infrastructure/github-actions -mindepth 1 -maxdepth 1 -exec mv {} .github/workflows/ \;
-  fi
-  if [ -d "infrastructure/pipelines" ]; then
-    find infrastructure/pipelines -maxdepth 1 -type f -name '*-gha-*' -exec mv {} .github/workflows/ \;
+  if [ ! -f ".github/workflows/deploy-infrastructure.yml" ]; then
+    if [ -d "infrastructure/github-actions" ]; then
+      find infrastructure/github-actions -mindepth 1 -maxdepth 1 -exec mv {} .github/workflows/ \;
+    fi
+    if [ -d "infrastructure/pipelines" ]; then
+      find infrastructure/pipelines -maxdepth 1 -type f -name '*-gha-*' -exec mv {} .github/workflows/ \;
+    fi
   fi
   rm -rf infrastructure/devops-pipelines
   rm -rf infrastructure/github-actions

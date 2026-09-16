@@ -22,12 +22,6 @@ require_path() {
   fi
 }
 
-require_workflow() {
-  if ! find "$project_dir/.github/workflows" -maxdepth 1 -type f -iname "*$1*.yml" -print -quit | grep -q .; then
-    fail "Missing GitHub workflow matching: *$1*.yml"
-  fi
-}
-
 require_path ".mlops-generation.json"
 require_path ".github/workflows"
 require_path "data-science"
@@ -38,10 +32,21 @@ require_path "config-infra-dev.yml"
 require_path "config-infra-test.yml"
 require_path "config-infra-prod.yml"
 
-require_workflow "infrastructure"
-require_workflow "train"
-require_workflow "online"
-require_workflow "batch"
+expected_workflows=(
+  "deploy-infrastructure.yml"
+  "train-register-model.yml"
+  "deploy-online-endpoint.yml"
+  "deploy-batch-endpoint.yml"
+)
+
+for workflow in "${expected_workflows[@]}"; do
+  require_path ".github/workflows/$workflow"
+done
+
+workflow_count=$(find "$project_dir/.github/workflows" -maxdepth 1 -type f -name '*.yml' | wc -l | tr -d ' ')
+if [ "$workflow_count" -ne "${#expected_workflows[@]}" ]; then
+  fail "Expected only the four selected Python SDK v2 GitHub workflows; found $workflow_count"
+fi
 
 if find "$project_dir" -path "$project_dir/.git" -prune -o \
   \( -type d -name terraform -o -type d -name devops-pipelines -o -type f -name '*.tf' \) \
@@ -62,10 +67,16 @@ fi
 if grep -R -I -q \
   -e '/Users/' \
   -e '/home/' \
-  -e 'AZURE_CREDENTIALS' \
-  -e 'client[_-]\?secret[[:space:]]*[:=]' \
   "$project_dir" --exclude-dir=.git; then
-  fail "Local paths or credential-shaped values remain"
+  fail "Local paths remain"
+fi
+
+if grep -R -I -E -q \
+  -e 'AZURE_CREDENTIALS[[:space:]]*[:=]' \
+  -e 'secrets\.AZURE_CREDENTIALS' \
+  -e 'client[_-]?secret[[:space:]]*[:=]' \
+  "$project_dir" --exclude-dir=.git; then
+  fail "Credential-shaped values remain"
 fi
 
 if grep -R -I -E -q \
