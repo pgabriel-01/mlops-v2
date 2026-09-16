@@ -196,6 +196,15 @@ If using WSL, complete all setup within the Unix environment:
      --assignee-principal-type ServicePrincipal \
      --role "Role Based Access Control Administrator" \
      --scope "$subscription_scope"
+
+   # Verify only direct assignments at the requested subscription scope.
+   # Some Azure CLI versions do not accept a boolean value after
+   # --include-inherited, so filter the returned scope explicitly.
+   az role assignment list \
+     --assignee-object-id "$service_principal_object_id" \
+     --scope "$subscription_scope" \
+     --query "[?scope=='$subscription_scope' && (roleDefinitionName=='Contributor' || roleDefinitionName=='Role Based Access Control Administrator')].{id:id,role:roleDefinitionName,scope:scope}" \
+     --output table
    ```
 
    **Step 5.3a: Get Service Principal Object ID**
