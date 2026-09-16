@@ -138,3 +138,6 @@ terraform.tfstate.backup
 .terraform.tfstate.lock.info
 .terraform
 terraform.tfvars
+
+# Locally generated consumer projects
+generated-consumers/

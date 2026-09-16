@@ -82,6 +82,8 @@ If using WSL, complete all setup within the Unix environment:
    * **project_name** is the name (case sensitive) of your project. A  GitHub repository will be created with this name
    * **github_org_name** is your GitHub organization (or GitHub username)
    * **project_template_github_url** is the URL to the original or your generated clone of the mlops_project_template repository from step 1
+   * **project_template_git_ref** is the branch, tag, or commit to fetch. Use an immutable commit SHA for repeatable validation.
+   * **create_github_repository** controls whether the generated project is created and pushed to GitHub. Set it to `false` for local-only validation.
    * **orchestration** specifies the CI/CD orchestration to use
    <br><br>
    A sparse_checkout.sh example is below:  
@@ -107,6 +109,12 @@ If using WSL, complete all setup within the Unix environment:
       
       #replace with the url for the project template for your organization created in step 2.2
       project_template_github_url=https://github.com/azure/mlops-project-template   
+
+      #use an immutable commit SHA for repeatable generation
+      project_template_git_ref=<project-template-commit-sha>
+
+      #set false to generate locally without creating or pushing a repository
+      create_github_repository=true
       
       #options: github-actions / azure-devops
       orchestration=github-actions 
