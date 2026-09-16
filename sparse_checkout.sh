@@ -6,9 +6,9 @@ git_folder_location=${git_folder_location:-'<local path>'}   #replace with the l
 project_name=${project_name:-Mlops-Test}   #replace with your project name
 github_org_name=${github_org_name:-orgname}   #replace with your github org name
 project_template_github_url=${project_template_github_url:-https://github.com/pgabriel-01/mlops-project-template}   #replace with the url for the project template for your organization, or use the validated default
-project_template_git_ref=${project_template_git_ref:-c9f7c7a1f62d1a71488b931a5f7ae83f13ee22df}   #branch, tag, or immutable commit SHA
+project_template_git_ref=${project_template_git_ref:-05c6cec4363efd2798a786765c35c4c8adc0b228}   #branch, tag, or immutable commit SHA
 mlops_templates_repository=${mlops_templates_repository:-pgabriel-01/mlops-templates}   #owner/repository used by reusable GitHub workflows
-mlops_templates_git_ref=${mlops_templates_git_ref:-be9755ccfc320fd1f2c1fb4f6b092d745d4fa6b5}   #use an immutable commit SHA for repeatable generation
+mlops_templates_git_ref=${mlops_templates_git_ref:-8ece39b3426149e3c8708e20d12e34499818e313}   #use an immutable commit SHA for repeatable generation
 create_github_repository=${create_github_repository:-true}   #set to false for local generation and validation
 
 set -euo pipefail
