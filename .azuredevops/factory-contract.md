@@ -94,7 +94,7 @@ Its private defaults are VNet `10.20.0.0/16`, Managed DevOps Pool subnet
 concurrency `2`.
 
 The contract was validated against `mlops-templates` commit
-`bef2c0256c932aaa89f6a874335983ed32cb2467`, which normalizes and validates
+`373f4bdcce94861174a9d32fcda26a4688044b46`, which normalizes and validates
 Terraform boolean parameters before planning and uses `TerraformInstaller@1`
 to avoid the retired Node 10 task runtime. Its
 `resolve-terraform-version.yml` template resolves `latest`, exact `x.y.z`,
@@ -111,7 +111,7 @@ reproducibility is preferred.
 
 The full private Classical/AML CLI v2/Terraform generation path was validated
 against `mlops-project-template` commit
-`80be1ccc228b03d6a0b2e773e878deeb5e84ebd2`, including the live-proven
+`6fbdbf701a82e9d78e893bf6c2501e803c812253`, including the live-proven
 Data Explorer `Standard_E2ads_v5` capacity, Key Vault RBAC propagation
 dependency, and identity-authenticated AML system datastores. The latter uses
 `Microsoft.MachineLearningServices/workspaces@2025-06-01` through azapi
@@ -144,7 +144,10 @@ path. Private storage connectivity includes Blob, File, Queue, and Table
 private endpoints and DNS links. Both AML workspace identities receive Storage
 Queue Data Contributor and Storage Table Data Contributor, and the AML managed
 network has outbound private-endpoint rules for the queue and table storage
-subresources.
+subresources. Completed batch tests download the job outputs and require a
+nonempty `predictions.csv`; failed jobs download redacted diagnostic logs.
+Terraform owns the durable private-network and RBAC settings so a repeat plan
+is clean without temporary role assignments.
 
 The hardened state storage account has public network access disabled, shared
 key access disabled, and default OAuth authentication enabled. The state
