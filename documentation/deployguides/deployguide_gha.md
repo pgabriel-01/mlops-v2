@@ -92,13 +92,13 @@ If using WSL, complete all setup within the Unix environment:
 
    ```bash
       #options: terraform / bicep
-      infrastructure_version=terraform
+      infrastructure_version=bicep
 
       #options: classical / cv / nlp
       project_type=classical
       
-      #options: python-sdk / aml-cli-v2
-      mlops_version=aml-cli-v2   
+      #options: aml-cli-v2 / python-sdk-v1 / python-sdk-v2 / rai-aml-cli-v2
+      mlops_version=python-sdk-v2
       
       #replace with the local root folder location where you want
       git_folder_location='/home/<username>/mlprojects'    
