@@ -109,15 +109,15 @@ If using WSL, complete all setup within the Unix environment:
       #replace with your github org name
       github_org_name=<orgname>
       
-      #replace with the url for the project template for your organization created in step 2.2
-      project_template_github_url=https://github.com/azure/mlops-project-template   
+      #validated project-template source
+      project_template_github_url=https://github.com/pgabriel-01/mlops-project-template
 
       #use an immutable commit SHA for repeatable generation
-      project_template_git_ref=<project-template-commit-sha>
+      project_template_git_ref=ff0c23a99192fd9f500dcd6666a62511c4120313
 
       #pin reusable workflow calls to an immutable commit
-      mlops_templates_repository=<github-org>/mlops-templates
-      mlops_templates_git_ref=<mlops-templates-commit-sha>
+      mlops_templates_repository=pgabriel-01/mlops-templates
+      mlops_templates_git_ref=be9755ccfc320fd1f2c1fb4f6b092d745d4fa6b5
 
       #set false to generate locally without creating or pushing a repository
       create_github_repository=true
