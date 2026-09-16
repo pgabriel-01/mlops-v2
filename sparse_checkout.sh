@@ -7,6 +7,8 @@ project_name=${project_name:-Mlops-Test}   #replace with your project name
 github_org_name=${github_org_name:-orgname}   #replace with your github org name
 project_template_github_url=${project_template_github_url:-https://github.com/azure/mlops-project-template}   #replace with the url for the project template for your organization created in step 2.2, or leave for demo purposes
 project_template_git_ref=${project_template_git_ref:-main}   #branch, tag, or immutable commit SHA
+mlops_templates_repository=${mlops_templates_repository:-Azure/mlops-templates}   #owner/repository used by reusable GitHub workflows
+mlops_templates_git_ref=${mlops_templates_git_ref:-main}   #use an immutable commit SHA for repeatable generation
 create_github_repository=${create_github_repository:-true}   #set to false for local generation and validation
 
 set -euo pipefail
@@ -16,6 +18,11 @@ case "$project_type" in classical|cv|nlp) ;; *) echo "Unsupported project_type: 
 case "$mlops_version" in aml-cli-v2|python-sdk-v1|python-sdk-v2|rai-aml-cli-v2) ;; *) echo "Unsupported mlops_version: $mlops_version" >&2; exit 1 ;; esac
 case "$orchestration" in github-actions|azure-devops) ;; *) echo "Unsupported orchestration: $orchestration" >&2; exit 1 ;; esac
 case "$create_github_repository" in true|false) ;; *) echo "create_github_repository must be true or false" >&2; exit 1 ;; esac
+
+if ! [[ "$mlops_templates_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "mlops_templates_repository must use owner/repository format" >&2
+  exit 1
+fi
 
 if [ "$git_folder_location" = '<local path>' ]; then
   echo "Set git_folder_location before running the generator." >&2
@@ -82,6 +89,19 @@ then
   rm -rf infrastructure/devops-pipelines
   rm -rf infrastructure/github-actions
   rm -rf infrastructure/pipelines
+
+  while IFS= read -r file; do
+    sed -i.bak \
+      -e "s|__MLOPS_TEMPLATES_REPOSITORY__|$mlops_templates_repository|g" \
+      -e "s|__MLOPS_TEMPLATES_REF__|$mlops_templates_git_ref|g" \
+      "$file"
+    rm "$file.bak"
+  done < <(grep -rl -e '__MLOPS_TEMPLATES_REPOSITORY__' -e '__MLOPS_TEMPLATES_REF__' . --exclude-dir=.git || true)
+
+  if grep -R -q -e '__MLOPS_TEMPLATES_REPOSITORY__' -e '__MLOPS_TEMPLATES_REF__' . --exclude-dir=.git; then
+    echo "Unresolved mlops-templates workflow reference placeholders remain." >&2
+    exit 1
+  fi
 fi
 
 if [[ "$orchestration" == "azure-devops" ]]
@@ -107,7 +127,9 @@ cat > .mlops-generation.json <<EOF
   "orchestration": "$orchestration",
   "project_template_github_url": "$project_template_github_url",
   "project_template_git_ref": "$project_template_git_ref",
-  "project_template_commit": "$project_template_commit"
+  "project_template_commit": "$project_template_commit",
+  "mlops_templates_repository": "$mlops_templates_repository",
+  "mlops_templates_git_ref": "$mlops_templates_git_ref"
 }
 EOF
 

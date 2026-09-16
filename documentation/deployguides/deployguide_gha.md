@@ -83,6 +83,8 @@ If using WSL, complete all setup within the Unix environment:
    * **github_org_name** is your GitHub organization (or GitHub username)
    * **project_template_github_url** is the URL to the original or your generated clone of the mlops_project_template repository from step 1
    * **project_template_git_ref** is the branch, tag, or commit to fetch. Use an immutable commit SHA for repeatable validation.
+   * **mlops_templates_repository** is the `owner/repository` containing reusable GitHub workflows.
+   * **mlops_templates_git_ref** is the reusable workflow revision. Use the full immutable commit SHA.
    * **create_github_repository** controls whether the generated project is created and pushed to GitHub. Set it to `false` for local-only validation.
    * **orchestration** specifies the CI/CD orchestration to use
    <br><br>
@@ -112,6 +114,10 @@ If using WSL, complete all setup within the Unix environment:
 
       #use an immutable commit SHA for repeatable generation
       project_template_git_ref=<project-template-commit-sha>
+
+      #pin reusable workflow calls to an immutable commit
+      mlops_templates_repository=<github-org>/mlops-templates
+      mlops_templates_git_ref=<mlops-templates-commit-sha>
 
       #set false to generate locally without creating or pushing a repository
       create_github_repository=true
