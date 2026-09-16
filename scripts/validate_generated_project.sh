@@ -4,9 +4,9 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-12bd1b85f9eb7e53c81fb477d687206776559343}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-557c0733d40755f10d258df250eaf3d60b283a72}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
-expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8dbe32cab29268ef128ece88ef994927648fc70f}
+expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8f8a8d5f33b88df5109a9c950bba19b616c15ea8}
 
 if [ -z "$project_dir" ] || [ ! -d "$project_dir" ]; then
   echo "Usage: $0 <generated-project-directory>" >&2
@@ -36,8 +36,6 @@ require_path "mlops/scripts/project_config.py"
 require_path "mlops/scripts/render_bicep_parameters.py"
 require_path "mlops/scripts/validate_project.py"
 require_path "mlops/azureml/deploy/batch/score.py"
-require_path "mlops/online-runtime/Dockerfile"
-require_path "mlops/online-runtime/requirements.txt"
 require_path "infrastructure/main.bicep"
 require_path "infrastructure/manifests/azureml-inference-namespace.yaml"
 require_path "infrastructure/modules/aks_aml_inference.bicep"
@@ -71,7 +69,6 @@ expected_workflows=(
   "deploy-infrastructure.yml"
   "train-register-model.yml"
   "deploy-online-endpoint.yml"
-  "publish-online-runtime.yml"
   "deploy-batch-endpoint.yml"
   "runner-smoke-test.yml"
 )
@@ -82,7 +79,12 @@ done
 
 workflow_count=$(find "$project_dir/.github/workflows" -maxdepth 1 -type f -name '*.yml' | wc -l | tr -d ' ')
 if [ "$workflow_count" -ne "${#expected_workflows[@]}" ]; then
-  fail "Expected only the eight selected Python SDK v2 GitHub workflows; found $workflow_count"
+  fail "Expected only the seven selected Python SDK v2 GitHub workflows; found $workflow_count"
+fi
+
+if [ -e "$project_dir/.github/workflows/publish-online-runtime.yml" ] ||
+  [ -e "$project_dir/mlops/online-runtime" ]; then
+  fail "Generated no-code project must not contain runtime publication or custom online runtime assets"
 fi
 
 if find "$project_dir" -path "$project_dir/.git" -prune -o \
@@ -303,15 +305,13 @@ if missing:
     raise SystemExit(1)
 PY
 
-if ! grep -Fq 'COPY --chown=runner:runner --from=kaniko /kaniko /kaniko' \
-  "$project_dir/runner-bootstrap/image/Dockerfile" ||
-  ! grep -Fq 'RUN test -x /kaniko/executor' \
-    "$project_dir/runner-bootstrap/image/Dockerfile" ||
-  ! grep -Fq '&& test -w /kaniko' \
-    "$project_dir/runner-bootstrap/image/Dockerfile" ||
-  ! grep -Fq 'test -w "$(dirname "$KANIKO_EXECUTOR")"' \
-    "$project_dir/.github/workflows/publish-online-runtime.yml"; then
-  fail "Runner image must copy the full Kaniko tree with runner ownership and verify build-time/runtime writability"
+if grep -R -I -E -q \
+  -e 'gcr\.io/kaniko-project' \
+  -e '/kaniko/executor' \
+  -e 'KANIKO_EXECUTOR' \
+  "$project_dir/runner-bootstrap" \
+  "$project_dir/.github/workflows"; then
+  fail "Generated no-code project must not retain Kaniko runner or workflow tooling"
 fi
 
 if ! grep -Fq 'runner_image:' \
@@ -321,10 +321,8 @@ if ! grep -Fq 'runner_image:' \
   ! grep -Fq '.spec.containers[] | select(.name == "runner") | .image' \
     "$project_dir/.github/workflows/runner-smoke-test.yml" ||
   ! grep -Fq '[[ "$live_image" == "$EXPECTED_RUNNER_IMAGE" ]]' \
-    "$project_dir/.github/workflows/runner-smoke-test.yml" ||
-  ! grep -Fq 'test -w /kaniko' \
     "$project_dir/.github/workflows/runner-smoke-test.yml"; then
-  fail "Runner smoke test must consume validated machine logs and verify the exact live image plus writable Kaniko"
+  fail "Runner smoke test must consume validated machine logs and verify the exact live image"
 fi
 
 if ! grep -Fq 'command="set -eu;' \
@@ -412,37 +410,64 @@ if ! grep -Fq "disableLocalAuth: true" \
   fail "Private AML compute, workspace networking, and storage local-auth policies changed"
 fi
 
-if ! grep -Fq 'tls_ca_key_vault_secret_id:' \
-  "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
-  ! grep -Fq 'endpoint_uami_resource_id:' \
-    "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
-  ! grep -Fq 'uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5' \
-    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
-  ! grep -Fq 'KANIKO_EXECUTOR: /kaniko/executor' \
-    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
-  ! grep -Fq 'DOCKER_CONFIG="$auth_dir" "$KANIKO_EXECUTOR"' \
-    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
-  ! grep -Fq -- '--digest-file "$digest_file"' \
-    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
-  ! grep -Fq 'if [[ "$digest" != "$built_digest" ]]' \
-    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
-  ! grep -Fq 'immutable_image="$login_server/mlops/online-runtime@$digest"' \
-    "$project_dir/.github/workflows/publish-online-runtime.yml" ||
-  ! grep -Eq '^FROM gcr\.io/kaniko-project/executor@sha256:[0-9a-f]{64} AS kaniko$' \
-    "$project_dir/runner-bootstrap/image/Dockerfile" ||
-  ! grep -Fq 'COPY --chown=runner:runner --from=kaniko /kaniko /kaniko' \
-    "$project_dir/runner-bootstrap/image/Dockerfile" ||
-  ! grep -Eq '^FROM .+@sha256:[0-9a-f]{64}$' \
-    "$project_dir/mlops/online-runtime/Dockerfile"; then
-  fail "Private online deployment must retain CA trust, managed identity, OIDC, and digest-pinned Kaniko publication"
-fi
+python3 - "$project_dir/.github/workflows/deploy-online-endpoint.yml" <<'PY' || failures=$((failures + 1))
+import re
+import sys
+from pathlib import Path
 
-if grep -I -E -q \
-  -e '(^|[;&|[:space:]])docker[[:space:]]+(build|push|login|run)([[:space:]]|$)' \
-  -e 'az[[:space:]]+acr[[:space:]]+build([[:space:]]|$)' \
-  -e '(^|[;&|[:space:]])(sudo|buildah|apt|apt-get)([[:space:]]|$)' \
-  "$project_dir/.github/workflows/publish-online-runtime.yml"; then
-  fail "Runtime publication must remain private and daemonless without Docker, ACR Tasks, sudo, Buildah, or runtime package installation"
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+errors = []
+for contract in (
+    "tls_ca_key_vault_secret_id:",
+    "endpoint_uami_resource_id:",
+    "mlflow_no_code: ${{ steps.config.outputs.online_mlflow_no_code }}",
+):
+    if contract not in source:
+        errors.append(f"online workflow is missing {contract}")
+
+match = re.search(
+    r"^  online-mlflow-no-code:\n(?P<body>.*?)(?=^  online-image-only:\n|\Z)",
+    source,
+    re.MULTILINE | re.DOTALL,
+)
+if match is None:
+    errors.append("online workflow is missing the explicit MLflow no-code job")
+else:
+    body = match.group("body")
+    for contract in (
+        "if: needs.config.outputs.mlflow_no_code == 'true'",
+        "mlflow_no_code: true",
+        "tls_ca_key_vault_secret_id:",
+        "endpoint_uami_resource_id:",
+    ):
+        if contract not in body:
+            errors.append(f"MLflow no-code job is missing {contract}")
+    for forbidden in (
+        "environment_name:",
+        "environment_version:",
+        "environment_image:",
+        "scoring_code:",
+        "scoring_script:",
+    ):
+        if forbidden in body:
+            errors.append(f"MLflow no-code job must omit {forbidden}")
+
+if errors:
+    for error in errors:
+        print(f"ERROR: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+
+if ! grep -Fq 'online_mlflow_no_code: true' "$project_dir/config-infra-dev.yml" ||
+  ! grep -Fq 'online_environment_name: ""' "$project_dir/config-infra-dev.yml" ||
+  ! grep -Fq 'online_environment_version: ""' "$project_dir/config-infra-dev.yml" ||
+  ! grep -Fq 'online_environment_image: ""' "$project_dir/config-infra-dev.yml" ||
+  ! grep -Fq "module amlOnlineEnvironment './modules/aml_environment.bicep' = if (enablePrivateAksInference && !onlineMlflowNoCode)" \
+    "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq "output onlineEnvironmentId string = enablePrivateAksInference && !onlineMlflowNoCode ? amlOnlineEnvironment!.outputs.environmentId : ''" \
+    "$project_dir/infrastructure/main.bicep"; then
+  fail "Generated project must default to MLflow no-code and create a workspace environment only for image-only mode"
 fi
 
 python3 - "$project_dir/infrastructure/main.bicep" \
@@ -487,8 +512,8 @@ PY
 expected_workflow_source="$expected_mlops_templates_repository/.github/workflows/python-sdk-v2-"
 workflow_source_count=$(grep -R -I -F -h "uses: $expected_workflow_source" \
   "$project_dir/.github/workflows"/*.yml | wc -l | tr -d ' ')
-if [ "$workflow_source_count" -ne 3 ]; then
-  fail "Expected three Python SDK v2 reusable workflows from $expected_mlops_templates_repository"
+if [ "$workflow_source_count" -ne 4 ]; then
+  fail "Expected four Python SDK v2 reusable workflow calls from $expected_mlops_templates_repository"
 fi
 
 if grep -R -I -F -h "uses: $expected_workflow_source" \
@@ -499,8 +524,8 @@ fi
 
 sdk_ref_count=$(grep -R -I -F -h "sdk_ref: $expected_mlops_templates_ref" \
   "$project_dir/.github/workflows"/*.yml | wc -l | tr -d ' ')
-if [ "$sdk_ref_count" -ne 3 ]; then
-  fail "Expected three Python SDK v2 SDK checkouts pinned to $expected_mlops_templates_ref"
+if [ "$sdk_ref_count" -ne 4 ]; then
+  fail "Expected four Python SDK v2 SDK checkouts pinned to $expected_mlops_templates_ref"
 fi
 
 templates_checkout=$(mktemp -d "${TMPDIR:-/tmp}/mlops-templates-contract.XXXXXX")
@@ -514,7 +539,8 @@ if ! git -C "$templates_checkout" init -q ||
     .github/workflows/python-sdk-v2-batch.yml \
     .github/workflows/python-sdk-v2-online.yml \
     src/python-sdk-v2/aml_client.py \
-    src/python-sdk-v2/create_batch_deployment.py; then
+    src/python-sdk-v2/create_batch_deployment.py \
+    src/python-sdk-v2/create_online_deployment.py; then
   fail "Unable to inspect the pinned mlops-templates source contract"
 else
   if ! grep -Fq 'CodeConfiguration' \
@@ -523,15 +549,23 @@ else
       "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
     ! grep -Fq 'refusing to invoke a deployment that could synthesize an anonymous' \
       "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'environment._id = resolved_id' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'The fetched registry Environment entity did not retain the' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'environment=environment' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
     ! grep -Fq 'AzureCliCredential()' \
       "$templates_checkout/src/python-sdk-v2/aml_client.py" ||
     ! grep -Fq 'use_private_ca_bundle' \
       "$templates_checkout/src/python-sdk-v2/aml_client.py" ||
+    ! grep -Fq 'mlflow_no_code' \
+      "$templates_checkout/src/python-sdk-v2/create_online_deployment.py" ||
     ! grep -Fq 'id-token: write' \
       "$templates_checkout/.github/workflows/python-sdk-v2-batch.yml" ||
     ! grep -Fq 'id-token: write' \
       "$templates_checkout/.github/workflows/python-sdk-v2-online.yml"; then
-    fail "Pinned mlops-templates source lacks explicit batch code, live verification, OIDC, or private CA contracts"
+    fail "Pinned mlops-templates source lacks the corrected registry Environment entity, explicit batch code, no-code online deployment, live verification, OIDC, or private CA contracts"
   fi
 fi
 
