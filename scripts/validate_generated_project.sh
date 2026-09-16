@@ -35,7 +35,7 @@ require_path "data"
 require_path "mlops/azureml"
 require_path "infrastructure/main.bicep"
 
-require_workflow "bicep"
+require_workflow "infrastructure"
 require_workflow "train"
 require_workflow "online"
 require_workflow "batch"

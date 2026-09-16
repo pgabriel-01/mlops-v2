@@ -41,7 +41,11 @@ git init -b main "$project_name"
 cd "$project_name"
 git remote add origin "$project_template_github_url"
 git sparse-checkout init --cone
-git sparse-checkout set "infrastructure/$infrastructure_version" "$project_type/$mlops_version"
+sparse_paths=("infrastructure/$infrastructure_version" "$project_type/$mlops_version")
+if [ "$orchestration" = "github-actions" ]; then
+  sparse_paths+=(".github/workflows")
+fi
+git sparse-checkout set "${sparse_paths[@]}"
 git fetch --depth 1 origin "$project_template_git_ref"
 git checkout --detach FETCH_HEAD
 project_template_commit=$(git rev-parse HEAD)
