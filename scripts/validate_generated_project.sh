@@ -4,7 +4,7 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-2764408766819b422592c888eea8ed7742a17e8c}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-bcf8ef85763eb6bba165ac284ab545a10e0f1039}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8dbe32cab29268ef128ece88ef994927648fc70f}
 
@@ -55,6 +55,7 @@ require_path "runner-bootstrap/helm/runner-set-values.yaml"
 require_path "runner-bootstrap/infrastructure/modules/aks.bicep"
 require_path "runner-bootstrap/scripts/preflight.sh"
 require_path "runner-bootstrap/scripts/provision.sh"
+require_path "runner-bootstrap/scripts/invoke_aks_command.py"
 require_path "runner-bootstrap/tests/test_validate_compute_quota.py"
 require_path "config-infra-dev.yml"
 require_path "config-infra-test.yml"
@@ -66,6 +67,7 @@ fi
 
 expected_workflows=(
   "build-runner-image.yml"
+  "update-runner-image.yml"
   "deploy-infrastructure.yml"
   "train-register-model.yml"
   "deploy-online-endpoint.yml"
@@ -80,7 +82,7 @@ done
 
 workflow_count=$(find "$project_dir/.github/workflows" -maxdepth 1 -type f -name '*.yml' | wc -l | tr -d ' ')
 if [ "$workflow_count" -ne "${#expected_workflows[@]}" ]; then
-  fail "Expected only the seven selected Python SDK v2 GitHub workflows; found $workflow_count"
+  fail "Expected only the eight selected Python SDK v2 GitHub workflows; found $workflow_count"
 fi
 
 if find "$project_dir" -path "$project_dir/.git" -prune -o \
@@ -238,6 +240,44 @@ fi
 
 if ! grep -Fq -- '- /home/runner/run.sh' "$project_dir/runner-bootstrap/helm/runner-set-values.yaml"; then
   fail "ARC runner image must explicitly invoke /home/runner/run.sh"
+fi
+
+python3 - "$project_dir/runner-bootstrap/scripts/invoke_aks_command.py" <<'PY' || failures=$((failures + 1))
+import ast
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+ast.parse(source)
+required = (
+    'response["exitCode"]',
+    'response.get("provisioningState")',
+    'provisioning_state != "Succeeded" or exit_code != 0',
+    '"--output",\n        "json"',
+)
+missing = [contract for contract in required if contract not in source]
+if missing:
+    for contract in missing:
+        print(f"ERROR: AKS command wrapper is missing {contract}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+
+if ! grep -Fq 'command="set -eu;' \
+  "$project_dir/runner-bootstrap/scripts/install_arc.sh" ||
+  ! grep -Fq 'runner-bootstrap/scripts/invoke_aks_command.py' \
+    "$project_dir/.github/workflows/update-runner-image.yml" ||
+  ! grep -Fq 'command="set -eu;' \
+    "$project_dir/.github/workflows/update-runner-image.yml" ||
+  ! grep -Fq 'runner_image must be this repository' \
+    "$project_dir/.github/workflows/update-runner-image.yml"; then
+  fail "ARC installation and runner updates must use POSIX remote commands, strict AKS exit validation, and immutable image inputs"
+fi
+
+if grep -R -I -F -q 'az aks command invoke' \
+  "$project_dir/runner-bootstrap/scripts" \
+  "$project_dir/.github/workflows/update-runner-image.yml"; then
+  fail "ARC scripts and update workflow must route AKS Run Command through the exitCode-validating wrapper"
 fi
 
 if ! grep -Fq "var keyVaultPrefix = take(replace(toLower(prefix), '-', ''), 5)" "$project_dir/infrastructure/main.bicep" ||
