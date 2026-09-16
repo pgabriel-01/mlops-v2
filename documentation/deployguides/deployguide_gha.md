@@ -322,12 +322,108 @@ one centrally managed scale set intentionally serves multiple repositories.
 GitHub's documented GitHub App flow assumes an organization-owned App. For a
 repository owned by a personal account, confirm that the intended App ownership
 and installation can register repository-scoped ARC runners before provisioning
-AKS; moving the repository to an organization is safer than falling back to a
-long-lived personal access token.
+AKS. If that compatibility cannot be confirmed, migrate the repository to an
+approved GitHub organization and use an organization-owned App. Do not use a
+long-lived personal access token as an unattended ARC credential.
 
 Create the ARC `githubConfigSecret` reference in the same namespace as the
 runner scale-set Helm release. Prefer an approved external-secret integration
 over copying the private key into source-controlled Helm values.
+
+### Optional personal-account GitHub App manifest bootstrap
+
+[GitHub App manifests](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
+support App registration for a personal account at
+`https://github.com/settings/apps/new`. This can predeclare the repository-level
+ARC permissions and reduce manual configuration without introducing a personal
+access token. It does not remove the requirement for the account owner to review
+the registration, create the App, install it, and take custody of the generated
+private key.
+
+Run a temporary callback listener bound only to loopback, for example
+`http://127.0.0.1:8787/github-app-manifest/callback`, and generate an
+unguessable state value such as `openssl rand -hex 32`. Store the expected state
+outside the repository. Submit a form using `POST` to
+`https://github.com/settings/apps/new?state=<state>` with a `manifest` field
+containing JSON shaped like:
+
+```json
+{
+  "name": "<unique-arc-app-name>",
+  "url": "https://github.com/actions/actions-runner-controller",
+  "redirect_url": "http://127.0.0.1:8787/github-app-manifest/callback",
+  "public": false,
+  "request_oauth_on_install": false,
+  "hook_attributes": {
+    "url": "http://127.0.0.1:8787/github-app-manifest/webhook-unused",
+    "active": false
+  },
+  "default_permissions": {
+    "administration": "write",
+    "metadata": "read"
+  },
+  "default_events": []
+}
+```
+
+The callback must compare the returned `state` byte-for-byte with the stored
+expected value before using the returned `code`. Reject the callback and do not
+convert the code when the state is missing or different.
+
+The code is single-use and the full three-step manifest flow must finish within
+one hour. Exchange it once with
+`POST /app-manifests/{code}/conversions`. The response contains the App ID and a
+one-time PEM private key, along with generated client and webhook secrets that
+ARC does not need. Do not print or log the response. Use a private directory
+outside the checkout, a restrictive umask, and an intermediate file that is
+deleted immediately:
+
+```bash
+secure_dir="$HOME/.config/arc-bootstrap/<app-name>"
+mkdir -p "$secure_dir"
+chmod 700 "$secure_dir"
+umask 077
+
+response_file=$(mktemp "$secure_dir/manifest-conversion.XXXXXX")
+curl --fail --silent --show-error \
+  --request POST \
+  --header "Accept: application/vnd.github+json" \
+  "https://api.github.com/app-manifests/<one-time-code>/conversions" \
+  > "$response_file"
+
+jq -e '.id and .pem' "$response_file" >/dev/null
+jq -r '.pem' "$response_file" > "$secure_dir/github-app.pem"
+chmod 600 "$secure_dir/github-app.pem"
+jq -r '.id' "$response_file" > "$secure_dir/github-app-id"
+rm -f "$response_file"
+```
+
+Do not run these commands with shell tracing enabled. The repository `.gitignore`
+excludes `*.pem` as defense in depth, but the key must never be created inside a
+checkout. After conversion, use the GitHub App settings page to install the
+private App on the personal account and grant access only to the intended
+repository. Record the installation ID without recording an installation token.
+Only then transfer the App ID, installation ID, and PEM through the approved
+secret-ingestion path used by the ARC bootstrap layer.
+
+Because App creation, installation, and private-key download require an
+authorized GitHub owner, stop before AKS provisioning when that owner is not
+available. The owner must complete and record this continuation checklist:
+
+1. Confirm whether the repository will remain personal-account owned or move to
+   an approved organization.
+2. Create or select the GitHub App under an ownership model supported for the
+   chosen ARC registration scope.
+3. Grant only the repository- or organization-scope permissions listed above,
+   install the App only where required, and record the App ID and installation
+   ID.
+4. Generate the private key once and place it directly in the approved secret
+   store. Do not paste it into chat, workflow logs, shell history, repository
+   files, or ordinary Helm values.
+5. Verify the installation can access the intended repository and approve the
+   ARC `minRunners`, `maxRunners`, egress policy, and external log destination.
+6. Authorize the platform operator to provision private AKS and ARC only after
+   these checks are complete.
 
 ### Runner scale-set contract
 
