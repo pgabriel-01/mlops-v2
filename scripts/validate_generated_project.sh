@@ -4,7 +4,7 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-9943dcfd844947c054b9aa082ac87a498239678c}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-ef2a477a0cdf1d902b81bd84bb984391c95ea7f4}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8dbe32cab29268ef128ece88ef994927648fc70f}
 
@@ -309,6 +309,36 @@ if ! grep -Fq 'command="set -eu;' \
     "$project_dir/.github/workflows/update-runner-image.yml"; then
   fail "ARC installation and runner updates must use POSIX remote commands, strict AKS exit validation, and immutable image inputs"
 fi
+
+python3 - "$project_dir/.github/workflows/update-runner-image.yml" <<'PY' || failures=$((failures + 1))
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+errors = []
+for job in ("update", "reconcile"):
+    match = re.search(
+        rf"^  {job}:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:\n|\Z)",
+        source,
+        re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        errors.append(f"runner image workflow is missing the {job} job")
+        continue
+    body = match.group("body")
+    if "    runs-on: ubuntu-24.04\n" not in body:
+        errors.append(f"runner image {job} job must use ubuntu-24.04")
+    if "runner-bootstrap/scripts/invoke_aks_command.py" not in body:
+        errors.append(f"runner image {job} job must use the strict AKS command helper")
+    if 'command="set -eu;' not in body:
+        errors.append(f"runner image {job} job must use POSIX set -eu remotely")
+if errors:
+    for error in errors:
+        print(f"ERROR: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 if grep -R -I -F -q 'az aks command invoke' \
   "$project_dir/runner-bootstrap/scripts" \
