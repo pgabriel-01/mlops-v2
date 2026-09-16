@@ -4,7 +4,7 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-ef2a477a0cdf1d902b81bd84bb984391c95ea7f4}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-12bd1b85f9eb7e53c81fb477d687206776559343}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8dbe32cab29268ef128ece88ef994927648fc70f}
 
@@ -291,6 +291,10 @@ required = (
     'response.get("provisioningState")',
     'provisioning_state != "Succeeded" or exit_code != 0',
     '"--output",\n        "json"',
+    'args.logs_output',
+    "os.O_WRONLY | os.O_CREAT | os.O_TRUNC",
+    "0o600",
+    "stream.write(raw_logs)",
 )
 missing = [contract for contract in required if contract not in source]
 if missing:
@@ -298,6 +302,30 @@ if missing:
         print(f"ERROR: AKS command wrapper is missing {contract}", file=sys.stderr)
     raise SystemExit(1)
 PY
+
+if ! grep -Fq 'COPY --chown=runner:runner --from=kaniko /kaniko /kaniko' \
+  "$project_dir/runner-bootstrap/image/Dockerfile" ||
+  ! grep -Fq 'RUN test -x /kaniko/executor' \
+    "$project_dir/runner-bootstrap/image/Dockerfile" ||
+  ! grep -Fq '&& test -w /kaniko' \
+    "$project_dir/runner-bootstrap/image/Dockerfile" ||
+  ! grep -Fq 'test -w "$(dirname "$KANIKO_EXECUTOR")"' \
+    "$project_dir/.github/workflows/publish-online-runtime.yml"; then
+  fail "Runner image must copy the full Kaniko tree with runner ownership and verify build-time/runtime writability"
+fi
+
+if ! grep -Fq 'runner_image:' \
+  "$project_dir/.github/workflows/runner-smoke-test.yml" ||
+  ! grep -Fq -- '--logs-output "$pod_json"' \
+    "$project_dir/.github/workflows/runner-smoke-test.yml" ||
+  ! grep -Fq '.spec.containers[] | select(.name == "runner") | .image' \
+    "$project_dir/.github/workflows/runner-smoke-test.yml" ||
+  ! grep -Fq '[[ "$live_image" == "$EXPECTED_RUNNER_IMAGE" ]]' \
+    "$project_dir/.github/workflows/runner-smoke-test.yml" ||
+  ! grep -Fq 'test -w /kaniko' \
+    "$project_dir/.github/workflows/runner-smoke-test.yml"; then
+  fail "Runner smoke test must consume validated machine logs and verify the exact live image plus writable Kaniko"
+fi
 
 if ! grep -Fq 'command="set -eu;' \
   "$project_dir/runner-bootstrap/scripts/install_arc.sh" ||
@@ -402,7 +430,7 @@ if ! grep -Fq 'tls_ca_key_vault_secret_id:' \
     "$project_dir/.github/workflows/publish-online-runtime.yml" ||
   ! grep -Eq '^FROM gcr\.io/kaniko-project/executor@sha256:[0-9a-f]{64} AS kaniko$' \
     "$project_dir/runner-bootstrap/image/Dockerfile" ||
-  ! grep -Fq 'COPY --from=kaniko /kaniko/executor /kaniko/executor' \
+  ! grep -Fq 'COPY --chown=runner:runner --from=kaniko /kaniko /kaniko' \
     "$project_dir/runner-bootstrap/image/Dockerfile" ||
   ! grep -Eq '^FROM .+@sha256:[0-9a-f]{64}$' \
     "$project_dir/mlops/online-runtime/Dockerfile"; then
