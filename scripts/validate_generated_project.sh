@@ -27,6 +27,9 @@ require_path ".github/workflows"
 require_path "data-science"
 require_path "data"
 require_path "mlops/azureml"
+require_path "mlops/scripts/export_config.py"
+require_path "mlops/scripts/project_config.py"
+require_path "mlops/scripts/render_bicep_parameters.py"
 require_path "infrastructure/main.bicep"
 require_path "config-infra-dev.yml"
 require_path "config-infra-test.yml"
@@ -62,6 +65,21 @@ if grep -R -I -q \
   -e 'managed_devops_pool' \
   "$project_dir" --exclude-dir=.git; then
   fail "Unresolved placeholders or Azure DevOps-specific configuration remain"
+fi
+
+if grep -R -I -q \
+  -e 'infrastructure/bicep/' \
+  -e 'classical/python-sdk-v2/' \
+  "$project_dir/.github/workflows"; then
+  fail "Source-template paths remain in generated GitHub workflows"
+fi
+
+if ! grep -R -I -q 'infrastructure/main\.bicep' "$project_dir/.github/workflows"; then
+  fail "Generated infrastructure workflow does not reference infrastructure/main.bicep"
+fi
+
+if ! grep -R -I -q 'mlops/azureml/train/job\.yml' "$project_dir/.github/workflows"; then
+  fail "Generated training workflow does not reference mlops/azureml/train/job.yml"
 fi
 
 if grep -R -I -q \
