@@ -176,65 +176,97 @@ If using WSL, complete all setup within the Unix environment:
 
    **Step 5.3: Assign Azure Permissions**
 
-   Assign the Contributor role to the service principal:
-   > `# az role assignment create --assignee <app_id> --role Contributor --scope /subscriptions/<subscription_id>`
+   The subscription-scoped Bicep deployment creates resources and role assignments.
+   Assign `Contributor` plus `Role Based Access Control Administrator` to the
+   service principal at the target subscription scope. Prefer this combination
+   over `Owner`.
+
+   ```bash
+   subscription_scope=/subscriptions/<subscription_id>
+   service_principal_object_id=$(az ad sp show --id <app_id> --query id -o tsv)
+
+   az role assignment create \
+     --assignee-object-id "$service_principal_object_id" \
+     --assignee-principal-type ServicePrincipal \
+     --role Contributor \
+     --scope "$subscription_scope"
+
+   az role assignment create \
+     --assignee-object-id "$service_principal_object_id" \
+     --assignee-principal-type ServicePrincipal \
+     --role "Role Based Access Control Administrator" \
+     --scope "$subscription_scope"
+   ```
 
    **Step 5.3a: Get Service Principal Object ID**
 
-   Get the object ID of the service principal (needed for Terraform configuration):
+   Get the object ID of the service principal:
    ```bash
    az ad sp show --id <app_id> --query id -o tsv
    ```
    
-   **IMPORTANT**: Save this object ID value. You will need to add it to `infrastructure/terraform/terraform.tfvars` as `github_actions_service_principal_id` in Step 2 below. This grants GitHub Actions the required permissions to register datasets, upload data, and execute training pipelines in your Azure ML workspace.
+   **IMPORTANT**: Save this object ID value. For Bicep-based GitHub projects,
+   configure it as the `AZURE_PRINCIPAL_OBJECT_ID` GitHub Environment variable.
+   The Bicep deployment uses it for deterministic CI principal role assignments.
 
    **Step 5.4: Configure Federated Identity Credentials**
 
-   Create federated credentials for GitHub Actions to authenticate without secrets. Run this for each branch you plan to use (main and any dev branches):
+   Create a federated credential for each GitHub Environment used by the project.
+   The issuer and audience must match GitHub Actions OIDC exactly.
 
-   For the **main** branch:
+   For the **dev** environment:
    ```bash
    az ad app federated-credential create --id <app_id> --parameters '{
-     "name": "github-main-branch",
+     "name": "github-environment-dev",
      "issuer": "https://token.actions.githubusercontent.com",
-     "subject": "repo:<github_org>/<repo_name>:ref:refs/heads/main",
+     "subject": "repo:<github_org>/<repo_name>:environment:dev",
      "audiences": ["api://AzureADTokenExchange"],
-     "description": "GitHub Actions for main branch"
+     "description": "GitHub Actions dev environment"
    }'
    ```
 
-   For a **dev** branch (optional, if using dev environment):
+   Repeat for `test` and `prod`, changing both the credential name and subject:
+
    ```bash
    az ad app federated-credential create --id <app_id> --parameters '{
-     "name": "github-dev-branch",
+     "name": "github-environment-test",
      "issuer": "https://token.actions.githubusercontent.com",
-     "subject": "repo:<github_org>/<repo_name>:ref:refs/heads/dev",
+     "subject": "repo:<github_org>/<repo_name>:environment:test",
      "audiences": ["api://AzureADTokenExchange"],
-     "description": "GitHub Actions for dev branch"
+     "description": "GitHub Actions test environment"
+   }'
+
+   az ad app federated-credential create --id <app_id> --parameters '{
+     "name": "github-environment-prod",
+     "issuer": "https://token.actions.githubusercontent.com",
+     "subject": "repo:<github_org>/<repo_name>:environment:prod",
+     "audiences": ["api://AzureADTokenExchange"],
+     "description": "GitHub Actions prod environment"
    }'
    ```
 
-   **Step 5.5: Add GitHub Repository Secrets**
+   **Step 5.5: Add GitHub Environment Secrets and Variables**
 
-   From your GitHub project, select **Settings**:
+   Create GitHub Environments named `dev`, `test`, and `prod`. Configure each
+   environment separately so its OIDC subject and settings remain isolated.
 
-   ![GitHub Settings](./images/gh-settings.png)
-
-   Then select **Secrets**, then **Actions**:
-
-   ![GitHub Secrets](./images/gh-secrets.png)
-
-   Add the following three repository secrets (select **New repository secret** for each):
+   Add the following three environment secrets:
 
    1. **AZURE_CLIENT_ID**: The application (client) ID from step 5.1
    2. **AZURE_TENANT_ID**: Your Azure tenant ID (get with `az account show --query tenantId -o tsv`)
    3. **AZURE_SUBSCRIPTION_ID**: Your Azure subscription ID (get with `az account show --query id -o tsv`)
+
+   Add the following environment variable:
+
+   1. **AZURE_PRINCIPAL_OBJECT_ID**: The service principal object ID from Step 5.3a
 
    > **IMPORTANT NOTES:**
    > - Do NOT create an **AZURE_CREDENTIALS** secret (deprecated)
    > - Do NOT use the `--sdk-auth` flag (deprecated)
    > - OIDC authentication provides enhanced security with no client secrets to manage or rotate
    > - Each workflow will automatically receive short-lived tokens from GitHub
+   > - Do not run a private-network deployment until an approved self-hosted
+   >   runner has network and private DNS access to the target Azure resources
    > - If deploying infrastructure with Terraform, no additional ARM_* secrets are needed (OIDC is configured in the provider)
 
    The GitHub configuration is complete.
@@ -243,9 +275,14 @@ If using WSL, complete all setup within the Unix environment:
 
 1. **Configure Azure ML Environment Parameters**
 
-   In your Github project repository (ex: taxi-fare-regression), there are two configuration files in the root, `config-infra-dev.yml` and `config-infra-prod.yml`. These files are used to define and deploy Dev and Prod Azure Machine Learning environments. With the default deployment, `config-infra-prod.yml` will be used when working with the main branch or your project and `config-infra-dev.yml` will be used when working with any non-main branch.
+   Python SDK v2 + GitHub Actions + Bicep projects contain
+   `config-infra-dev.yml`, `config-infra-test.yml`, and `config-infra-prod.yml`.
+   Select the target with the workflow's `environment` input; the selected GitHub
+   Environment supplies the matching OIDC identity settings. Start with `dev`.
 
-   It is recommended to first create a dev branch from main and deploy this environment first.
+   Other generated patterns may use branch-based environment selection. Follow
+   the generated project README and workflow inputs when they differ from the
+   legacy examples later in this guide.
 
 >**Important:**
 >> Note that `config-infra-prod.yml` and `config-infra-dev.yml` files use default region as **eastus** to deploy resource group and Azure ML Workspace. If you are using Free/Trial or similar learning purpose subscriptions, you must do one of the below  -
@@ -387,11 +424,16 @@ If using WSL, complete all setup within the Unix environment:
 
    ![GH-workflows](./images/gh-workflows.png)
 
-   Depending on the the use case, available workflows may vary. Select the workflow to 'deploy-infra'. In this scenario, the workflow to select would be **tf-gha-deploy-infra.yml**. This would deploy the Azure ML infrastructure using GitHub Actions and Terraform.
+   Depending on the use case, available workflows may vary. For Python SDK v2 +
+   GitHub Actions + Bicep, select **Deploy infrastructure**, choose the `dev`
+   environment, validate first, and only select the deployment option after
+   reviewing validation output.
 
    ![GH-deploy-infra](./images/gh-deploy-infra.png)
 
-   On the right side of the page, select **Run workflow** and select the branch to run the workflow on. This may deploy Dev Infrastructure if you've created a dev branch or Prod infrastructure if deploying from main. Monitor the pipline for successful completion.
+   On the right side of the page, select **Run workflow**, choose the target
+   environment, and monitor the workflow. Private-network environments require
+   the configured self-hosted runner to be online before validation or deployment.
 
    ![GH-infra-pipeline](./images/gh-infra-pipeline.png)
 
@@ -460,7 +502,7 @@ With the trained model registered in the Azure Machine Learning workspace, you a
 
 ## Deploying the Trained Model in Dev
 
-This scenario includes prebuilt workflows for two approaches to deploying a trained model, batch scoring or a deploying a model to an endpoint for real-time scoring. You may run either or both of these workflows in your dev branch to test the performance of the model in your Dev Azure ML workspace.
+This scenario includes prebuilt workflows for two approaches to deploying a trained model, batch scoring or deploying a model to an endpoint for real-time scoring. For environment-based projects, choose `dev` when dispatching either workflow to test the model in the DEV Azure ML workspace.
 
 In your GitHub project repository (ex: taxi-fare-regression), select **Actions**  
  
@@ -567,13 +609,21 @@ After deploying your endpoints, you can test them to validate model inference.
  
 ## Moving to Production
 
-Example scenarios can be trained and deployed both for Dev and Prod branches and environments. When you are satisfied with the performance of the model training pipeline, model, and deployment in Testing, Dev pipelines and models can be replicated and deployed in the Production environment.
+Example scenarios can be trained and deployed to DEV, test, and production
+environments. Environment-based projects promote by dispatching the same
+workflow with the target GitHub Environment rather than deriving the Azure
+environment from the branch name.
 
 The sample training and deployment Azure ML pipelines and GitHub workflows can be used as a starting point to adapt your own modeling code and data.
 
 ## Destroying Environments
 
-When you need to tear down a development or production environment:
+The following Terraform destroy example applies only to generated Terraform
+patterns. The Python SDK v2 + GitHub Actions + Bicep pattern does not currently
+generate a destroy workflow; use an explicitly reviewed Azure deletion process
+for that pattern.
+
+When you need to tear down a Terraform development or production environment:
 
 1. **Automatic Endpoint Cleanup**: The destroy workflow automatically deletes all Azure ML endpoints (online and batch) before destroying the infrastructure. This prevents the "Cannot delete resource while nested resources exist" error.
 
