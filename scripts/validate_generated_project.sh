@@ -4,9 +4,9 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-557c0733d40755f10d258df250eaf3d60b283a72}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-cabad46b1fa7ccbf1fbe1d2f8b737c9125cdff47}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
-expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-8f8a8d5f33b88df5109a9c950bba19b616c15ea8}
+expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-812be5b654e974b573a0f5a52f2869068226a194}
 
 if [ -z "$project_dir" ] || [ ! -d "$project_dir" ]; then
   echo "Usage: $0 <generated-project-directory>" >&2
@@ -393,12 +393,49 @@ if ! grep -Fq "resource trustedAccess 'Microsoft.ContainerService/managedCluster
   ! grep -Fq 'sslCertPemFile: extensionTlsCertPem' \
     "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
   ! grep -Fq 'sslKeyPemFile: extensionTlsKeyPem' \
-    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
-  ! grep -Fq "kind: 'AzureCLI'" \
-    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
-  ! grep -Fq 'az aks command invoke' \
     "$project_dir/infrastructure/modules/aks_aml_inference.bicep"; then
-  fail "Private AKS inference must retain Trusted Access, namespace bootstrap, and protected TLS configuration"
+  fail "Private AKS inference must retain Trusted Access and protected TLS configuration"
+fi
+
+if grep -R -I -q \
+  -e 'Microsoft.Resources/deploymentScripts' \
+  -e "kind: 'AzureCLI'" \
+  "$project_dir/infrastructure"; then
+  fail "Private AKS namespace bootstrap must not use Azure Deployment Scripts"
+fi
+
+if ! grep -Fq "'Microsoft.ContainerService/managedClusters/runCommand/action'" \
+  "$project_dir/infrastructure/modules/aks_run_command_role.bicep" ||
+  ! grep -Fq "'Microsoft.ContainerService/managedClusters/commandResults/read'" \
+    "$project_dir/infrastructure/modules/aks_run_command_role.bicep" ||
+  ! grep -Fq 'param namespaceBootstrapPrincipalId string' \
+    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
+  ! grep -Fq 'principalId: namespaceBootstrapPrincipalId' \
+    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
+  ! grep -Fq 'namespaceBootstrapPrincipalId: ciPrincipalObjectId' \
+    "$project_dir/infrastructure/main.bicep"; then
+  fail "Private AKS namespace bootstrap must assign the minimal Run Command role to the CI OIDC principal"
+fi
+
+if ! grep -Fq 'kind: Namespace' \
+  "$project_dir/infrastructure/manifests/azureml-inference-namespace.yaml" ||
+  ! grep -Fq 'kind: ServiceAccount' \
+    "$project_dir/infrastructure/manifests/azureml-inference-namespace.yaml" ||
+  ! grep -Fq 'completePrivateAksInferenceDeployment=false' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
+  ! grep -Fq 'content.replace("__ONLINE_NAMESPACE__", namespace)' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
+  ! grep -Fq '"__ONLINE_INFERENCE_IDENTITY_CLIENT_ID__"' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
+  ! grep -Fq 'if "__ONLINE_" in content:' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
+  ! grep -Fq 'bootstrap_succeeded=false' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
+  ! grep -Fq 'runner-bootstrap/scripts/invoke_aks_command.py' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
+  ! grep -Fq -- '--command "kubectl apply -f $(basename "$namespace_manifest")"' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml"; then
+  fail "Infrastructure workflow must own strict, idempotent namespace and service-account bootstrap"
 fi
 
 if ! grep -Fq "disableLocalAuth: true" \
@@ -545,13 +582,19 @@ if ! git -C "$templates_checkout" init -q ||
 else
   if ! grep -Fq 'CodeConfiguration' \
     "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'def _materialize_build_environment(' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'def _materialize_image_environment(' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'def resolve_batch_environment(' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'ml_client.environments.create_or_update(environment)' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'SOURCE_MANIFEST_PROPERTY' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
     ! grep -Fq 'verify_live_deployment(' \
       "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
     ! grep -Fq 'refusing to invoke a deployment that could synthesize an anonymous' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'environment._id = resolved_id' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'The fetched registry Environment entity did not retain the' \
       "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
     ! grep -Fq 'environment=environment' \
       "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
@@ -565,7 +608,7 @@ else
       "$templates_checkout/.github/workflows/python-sdk-v2-batch.yml" ||
     ! grep -Fq 'id-token: write' \
       "$templates_checkout/.github/workflows/python-sdk-v2-online.yml"; then
-    fail "Pinned mlops-templates source lacks the corrected registry Environment entity, explicit batch code, no-code online deployment, live verification, OIDC, or private CA contracts"
+    fail "Pinned mlops-templates source lacks registry-to-workspace batch environment materialization, explicit batch code, no-code online deployment, live verification, OIDC, or private CA contracts"
   fi
 fi
 
