@@ -113,7 +113,7 @@ If using WSL, complete all setup within the Unix environment:
       project_template_github_url=https://github.com/pgabriel-01/mlops-project-template
 
       #use an immutable commit SHA for repeatable generation
-      project_template_git_ref=cabad46b1fa7ccbf1fbe1d2f8b737c9125cdff47
+      project_template_git_ref=a82747f155a0a436c6d223f6cca758061c781a4c
 
       #pin reusable workflow calls to an immutable commit
       mlops_templates_repository=pgabriel-01/mlops-templates
