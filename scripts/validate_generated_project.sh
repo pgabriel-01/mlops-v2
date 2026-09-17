@@ -4,7 +4,7 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-cabad46b1fa7ccbf1fbe1d2f8b737c9125cdff47}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-a82747f155a0a436c6d223f6cca758061c781a4c}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-812be5b654e974b573a0f5a52f2869068226a194}
 
@@ -393,8 +393,15 @@ if ! grep -Fq "resource trustedAccess 'Microsoft.ContainerService/managedCluster
   ! grep -Fq 'sslCertPemFile: extensionTlsCertPem' \
     "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
   ! grep -Fq 'sslKeyPemFile: extensionTlsKeyPem' \
+    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
+  ! grep -Fq "'nodeSelector.ml\\\\.azure\\\\.com/inference': 'true'" \
     "$project_dir/infrastructure/modules/aks_aml_inference.bicep"; then
-  fail "Private AKS inference must retain Trusted Access and protected TLS configuration"
+  fail "Private AKS inference must retain Trusted Access, flattened node selection, and protected TLS configuration"
+fi
+
+if grep -Fq "nodeSelector: 'ml.azure.com/inference=true'" \
+  "$project_dir/infrastructure/modules/aks_aml_inference.bicep"; then
+  fail "Azure ML extension node selection must use the flattened configuration setting"
 fi
 
 if grep -R -I -q \
