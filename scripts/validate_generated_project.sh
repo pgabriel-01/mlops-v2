@@ -4,7 +4,7 @@ set -euo pipefail
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-a82747f155a0a436c6d223f6cca758061c781a4c}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-4e394feb04c19d8d79f1040205f36f7166ca4a71}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -186,6 +186,10 @@ for environment in dev test prod; do
   config_file="$project_dir/config-infra-$environment.yml"
 
   if [ -f "$config_file" ]; then
+    if ! grep -Eq '^batch_compute_name:[[:space:]]*cpu-cluster[[:space:]]*$' "$config_file"; then
+      fail "config-infra-$environment.yml must use cpu-cluster for private workspace image builds"
+    fi
+
     if ! grep -Eq '^runner_hub_vnet_resource_id:[[:space:]]*(""|'\'\'')[[:space:]]*$' "$config_file"; then
       fail "config-infra-$environment.yml must leave runner_hub_vnet_resource_id empty"
     fi
@@ -514,22 +518,50 @@ if ! grep -Fq 'online_mlflow_no_code: true' "$project_dir/config-infra-dev.yml" 
   fail "Generated project must default to MLflow no-code and create a workspace environment only for image-only mode"
 fi
 
+if ! grep -Fq '"batch_compute_name": "imageBuildComputeName"' \
+  "$project_dir/mlops/scripts/render_bicep_parameters.py"; then
+  fail "Bicep parameter rendering must map batch_compute_name to imageBuildComputeName"
+fi
+
 python3 - "$project_dir/infrastructure/main.bicep" \
-  "$project_dir/infrastructure/modules/aml_workspace.bicep" <<'PY' || failures=$((failures + 1))
+  "$project_dir/infrastructure/modules/aml_workspace.bicep" \
+  "$project_dir/infrastructure" <<'PY' || failures=$((failures + 1))
+import re
 import sys
 from pathlib import Path
 
-main_path, workspace_path = map(Path, sys.argv[1:])
+main_path, workspace_path, infrastructure_path = map(Path, sys.argv[1:])
 main = main_path.read_text(encoding="utf-8")
 workspace = workspace_path.read_text(encoding="utf-8")
 
 errors = []
+workspace_puts = []
+workspace_resource = re.compile(
+    r"resource\s+\w+\s+'Microsoft\.MachineLearningServices/workspaces@2025-06-01'\s*="
+)
+for bicep_path in infrastructure_path.rglob("*.bicep"):
+    source = bicep_path.read_text(encoding="utf-8")
+    workspace_puts.extend(
+        f"{bicep_path.relative_to(infrastructure_path)}:{match.start()}"
+        for match in workspace_resource.finditer(source)
+    )
+if len(workspace_puts) != 1:
+    errors.append(
+        "AML infrastructure must contain exactly one initial workspace PUT at API "
+        f"2025-06-01; found {workspace_puts}"
+    )
 if "managedNetwork" in workspace:
     errors.append("AML workspace must use the custom VNet path without managedNetwork")
 if "serverlessComputeSettings" in workspace:
     errors.append("AML workspace must not set serverlessComputeSettings")
 if "computeSubnetId" in workspace:
     errors.append("AML workspace module must not accept computeSubnetId")
+if "param imageBuildComputeName string" not in workspace:
+    errors.append("AML workspace module must accept the generated image build compute name")
+if "imageBuildCompute: imageBuildComputeName" not in workspace:
+    errors.append(
+        "AML workspace initial PUT must set properties.imageBuildCompute declaratively"
+    )
 
 mlw_start = main.find("module mlw './modules/aml_workspace.bicep'")
 mlw_end = main.find("module peMlw ", mlw_start)
@@ -537,6 +569,12 @@ if mlw_start == -1 or mlw_end == -1:
     errors.append("AML workspace module invocation was not found")
 elif "computeSubnetId" in main[mlw_start:mlw_end]:
     errors.append("AML workspace invocation must not pass computeSubnetId")
+elif "imageBuildComputeName: imageBuildComputeName" not in main[mlw_start:mlw_end]:
+    errors.append(
+        "AML workspace invocation must receive the top-level imageBuildComputeName"
+    )
+elif "mlwcc" in main[mlw_start:mlw_end]:
+    errors.append("AML workspace creation must not depend on the compute child resource")
 
 mlwcc_start = main.find("module mlwcc './modules/aml_computecluster.bicep'")
 mlwcc_end = main.find("module amlReg ", mlwcc_start)
@@ -544,8 +582,17 @@ if mlwcc_start == -1 or mlwcc_end == -1:
     errors.append("AML compute cluster module invocation was not found")
 elif "subnetId: enableVNet ? vnet!.outputs.computeSubnetId : ''" not in main[mlwcc_start:mlwcc_end]:
     errors.append("AML compute cluster must retain the compute subnet")
+elif "computeClusterName: imageBuildComputeName" not in main[mlwcc_start:mlwcc_end]:
+    errors.append(
+        "AML compute cluster and workspace imageBuildCompute must use the same name"
+    )
 elif "dependsOn: [\n    peMlw\n  ]" not in main[mlwcc_start:mlwcc_end]:
     errors.append("AML compute cluster must explicitly depend on the workspace private endpoint")
+
+if "param imageBuildComputeName string" not in main:
+    errors.append(
+        "Top-level Bicep must expose imageBuildComputeName for batch_compute_name"
+    )
 
 if errors:
     for error in errors:
