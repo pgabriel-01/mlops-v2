@@ -117,7 +117,7 @@ If using WSL, complete all setup within the Unix environment:
 
       #pin reusable workflow calls to an immutable commit
       mlops_templates_repository=pgabriel-01/mlops-templates
-      mlops_templates_git_ref=812be5b654e974b573a0f5a52f2869068226a194
+      mlops_templates_git_ref=70b7ce23a9cb905b528fc4cbc1a375eabf893a0c
 
       #set false to generate locally without creating or pushing a repository
       create_github_repository=true
