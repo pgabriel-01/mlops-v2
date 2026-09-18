@@ -6,7 +6,7 @@ project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
 expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-a82747f155a0a436c6d223f6cca758061c781a4c}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
-expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-812be5b654e974b573a0f5a52f2869068226a194}
+expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
 if [ -z "$project_dir" ] || [ ! -d "$project_dir" ]; then
   echo "Usage: $0 <generated-project-directory>" >&2
@@ -599,6 +599,14 @@ else
       "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
     ! grep -Fq 'SOURCE_MANIFEST_PROPERTY' \
       "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'SOURCE_PROVENANCE_PROPERTIES' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'def _environment_provenance(' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'tags = getattr(environment, "tags", None)' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
+    ! grep -Fq 'Workspace environment contains conflicting registry provenance.' \
+      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
     ! grep -Fq 'verify_live_deployment(' \
       "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
     ! grep -Fq 'refusing to invoke a deployment that could synthesize an anonymous' \
@@ -615,7 +623,7 @@ else
       "$templates_checkout/.github/workflows/python-sdk-v2-batch.yml" ||
     ! grep -Fq 'id-token: write' \
       "$templates_checkout/.github/workflows/python-sdk-v2-online.yml"; then
-    fail "Pinned mlops-templates source lacks registry-to-workspace batch environment materialization, explicit batch code, no-code online deployment, live verification, OIDC, or private CA contracts"
+    fail "Pinned mlops-templates source lacks registry-to-workspace batch environment materialization, normalized provenance, explicit batch code, no-code online deployment, live verification, OIDC, or private CA contracts"
   fi
 fi
 
