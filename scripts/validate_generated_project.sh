@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-4e394feb04c19d8d79f1040205f36f7166ca4a71}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-60fd56455926b2e1391334cc7b292a84d273b3c4}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -26,126 +27,325 @@ require_path() {
   fi
 }
 
-require_path ".mlops-generation.json"
-require_path ".github/workflows"
-require_path "data-science"
-require_path "data"
-require_path "mlops/azureml"
-require_path "mlops/scripts/export_config.py"
-require_path "mlops/scripts/project_config.py"
-require_path "mlops/scripts/render_bicep_parameters.py"
-require_path "mlops/scripts/validate_project.py"
-require_path "mlops/azureml/deploy/batch/score.py"
-require_path "infrastructure/main.bicep"
-require_path "infrastructure/manifests/azureml-inference-namespace.yaml"
-require_path "infrastructure/modules/aks_aml_inference.bicep"
-require_path "infrastructure/modules/aks_run_command_role.bicep"
-require_path "infrastructure/modules/aml_computecluster.bicep"
-require_path "infrastructure/modules/aml_environment.bicep"
-require_path "infrastructure/modules/aml_kubernetes_compute.bicep"
-require_path "infrastructure/modules/aml_kubernetes_identity.bicep"
-require_path "infrastructure/modules/aml_workspace.bicep"
-require_path "infrastructure/modules/key_vault.bicep"
-require_path "infrastructure/modules/private_dns_zone_vnet_link.bicep"
-require_path "infrastructure/modules/private_dns_zones.bicep"
-require_path "runner-bootstrap/image/Dockerfile"
-require_path "runner-bootstrap/helm/runner-set-values.yaml"
-require_path "runner-bootstrap/infrastructure/modules/aks.bicep"
-require_path "runner-bootstrap/scripts/preflight.sh"
-require_path "runner-bootstrap/scripts/provision.sh"
-require_path "runner-bootstrap/scripts/invoke_aks_command.py"
-require_path "runner-bootstrap/tests/test_validate_compute_quota.py"
-require_path "config-infra-dev.yml"
-require_path "config-infra-test.yml"
-require_path "config-infra-prod.yml"
+for path in \
+  .mlops-generation.json \
+  README.md \
+  config-infra-dev.yml \
+  config-infra-test.yml \
+  config-infra-prod.yml \
+  data-science \
+  infrastructure/assets/dev-jumpbox-bootstrap.pub \
+  infrastructure/main.bicep \
+  infrastructure/modules/aml_computecluster.bicep \
+  infrastructure/modules/aml_online_endpoint_identity.bicep \
+  infrastructure/modules/aml_workspace.bicep \
+  infrastructure/modules/bastion.bicep \
+  infrastructure/modules/key_vault.bicep \
+  infrastructure/modules/private_dns_zone_vnet_link.bicep \
+  infrastructure/modules/private_dns_zones.bicep \
+  infrastructure/modules/storage_account.bicep \
+  infrastructure/modules/vnet.bicep \
+  mlops/azureml/deploy/batch/score.py \
+  mlops/azureml/deploy/online/code/score.py \
+  mlops/azureml/deploy/online/deploy.py \
+  mlops/azureml/deploy/online/deployment_lock.py \
+  mlops/azureml/deploy/online/requirements.txt \
+  mlops/azureml/train/job.yml \
+  mlops/scripts/check_legacy_bastion.py \
+  mlops/scripts/export_config.py \
+  mlops/scripts/project_config.py \
+  mlops/scripts/render_bicep_parameters.py \
+  mlops/scripts/validate_project.py \
+  runner-bootstrap/helm/runner-set-values.yaml \
+  runner-bootstrap/image/Dockerfile \
+  runner-bootstrap/infrastructure/main.bicep \
+  runner-bootstrap/scripts/deployment_config.sh \
+  runner-bootstrap/scripts/install_arc.sh \
+  runner-bootstrap/scripts/invoke_aks_command.py \
+  runner-bootstrap/scripts/preflight.sh \
+  runner-bootstrap/scripts/provision.sh \
+  runner-bootstrap/tests/test_validate_compute_quota.py; do
+  require_path "$path"
+done
 
-if [ -e "$project_dir/classical" ] || [ -e "$project_dir/cv" ] || [ -e "$project_dir/nlp" ]; then
+for retired in \
+  infrastructure/manifests/azureml-inference-namespace.yaml \
+  infrastructure/modules/aks_aml_inference.bicep \
+  infrastructure/modules/aks_run_command_role.bicep \
+  infrastructure/modules/aml_environment.bicep \
+  infrastructure/modules/aml_kubernetes_compute.bicep \
+  infrastructure/modules/aml_kubernetes_identity.bicep; do
+  if [ -e "$project_dir/$retired" ]; then
+    fail "Retired private AKS inference asset remains: $retired"
+  fi
+done
+
+if [ -e "$project_dir/classical" ] ||
+  [ -e "$project_dir/cv" ] ||
+  [ -e "$project_dir/nlp" ]; then
   fail "Source selector directories remain in the generated project"
 fi
 
-expected_workflows=(
-  "build-runner-image.yml"
-  "update-runner-image.yml"
-  "deploy-infrastructure.yml"
-  "train-register-model.yml"
-  "deploy-online-endpoint.yml"
-  "deploy-batch-endpoint.yml"
-  "runner-smoke-test.yml"
-)
+metadata_file=$(mktemp "${TMPDIR:-/tmp}/mlops-generation.XXXXXX")
+trap 'rm -f "$metadata_file"' EXIT
 
-for workflow in "${expected_workflows[@]}"; do
-  require_path ".github/workflows/$workflow"
+if ! python3 - "$project_dir" \
+  "$expected_project_template_url" \
+  "$expected_project_template_ref" \
+  "$expected_mlops_templates_repository" \
+  "$expected_mlops_templates_ref" >"$metadata_file" <<'PY'
+import json
+import ipaddress
+import re
+import sys
+import unicodedata
+from pathlib import Path
+
+project_dir = Path(sys.argv[1])
+RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+expected_url, expected_ref, expected_repository, expected_templates_ref = sys.argv[2:]
+metadata = json.loads((project_dir / ".mlops-generation.json").read_text(encoding="utf-8"))
+
+errors = []
+expected_source = {
+    "infrastructure_version": "bicep",
+    "project_type": "classical",
+    "mlops_version": "python-sdk-v2",
+    "project_template_github_url": expected_url,
+    "project_template_git_ref": expected_ref,
+    "project_template_commit": expected_ref,
+    "mlops_templates_repository": expected_repository,
+    "mlops_templates_git_ref": expected_templates_ref,
+}
+for key, expected in expected_source.items():
+    if metadata.get(key) != expected:
+        errors.append(f"provenance {key} must be {expected!r}, got {metadata.get(key)!r}")
+
+workload_name = metadata.get("workload_name")
+namespace = metadata.get("workload_namespace")
+environment_names = metadata.get("environment_names")
+environment_vnet_cidrs = metadata.get("environment_vnet_cidrs")
+orchestration = metadata.get("orchestration")
+
+if not isinstance(workload_name, str) or not workload_name.strip():
+    errors.append("workload_name must be a non-empty string")
+elif len(workload_name) > 256 or any(
+    unicodedata.category(character).startswith("C") for character in workload_name
+):
+    errors.append("workload_name exceeds tag limits or contains control characters")
+if not isinstance(namespace, str) or not re.fullmatch(r"[a-z][a-z0-9]{1,15}", namespace):
+    errors.append("workload_namespace must be a 2-16 character lowercase Azure-safe name")
+if orchestration not in {"github-actions", "azure-devops"}:
+    errors.append(f"unsupported orchestration provenance: {orchestration!r}")
+if (
+    not isinstance(environment_names, dict)
+    or set(environment_names) != {"dev", "test", "prod"}
+    or any(not isinstance(value, str) or not value for value in environment_names.values())
+):
+    errors.append("environment_names must map dev/test/prod to three unique non-empty names")
+else:
+    normalized_environment_names = set()
+    for environment, value in environment_names.items():
+        if len(value) > 255 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,254}", value):
+            errors.append(f"{environment} environment name uses unsupported characters or length")
+        normalized = value.casefold()
+        if normalized in normalized_environment_names:
+            errors.append("environment_names collide under GitHub case-insensitive comparison")
+        normalized_environment_names.add(normalized)
+
+network_cidrs = {}
+environment_networks = {}
+if (
+    not isinstance(environment_vnet_cidrs, dict)
+    or set(environment_vnet_cidrs) != {"dev", "test", "prod"}
+):
+    errors.append("environment_vnet_cidrs must map dev/test/prod to explicit CIDRs")
+else:
+    for environment, value in environment_vnet_cidrs.items():
+        try:
+            network = ipaddress.ip_network(value, strict=True)
+            if not isinstance(network, ipaddress.IPv4Network):
+                raise ValueError("must be IPv4")
+            if not any(network.subnet_of(parent) for parent in RFC1918_NETWORKS):
+                raise ValueError("must be contained in RFC1918 space")
+            if network.prefixlen > 21:
+                raise ValueError("must be /21 or larger")
+            environment_networks[environment] = network
+            subnets = list(network.subnets(new_prefix=24))
+            network_cidrs[environment] = {
+                "vnet_address_prefix": str(network),
+                "default_subnet_prefix": str(subnets[0]),
+                "compute_subnet_prefix": str(subnets[1]),
+                "private_endpoint_subnet_prefix": str(subnets[2]),
+                "bastion_subnet_prefix": str(next(subnets[3].subnets(new_prefix=26))),
+                "administration_subnet_prefix": str(next(subnets[4].subnets(new_prefix=27))),
+            }
+            subnet_values = [
+                ipaddress.ip_network(subnet)
+                for key, subnet in network_cidrs[environment].items()
+                if key != "vnet_address_prefix"
+            ]
+            if any(not subnet.subnet_of(network) for subnet in subnet_values):
+                raise ValueError("derived subnet is outside its environment VNet")
+            if any(
+                subnet.overlaps(other)
+                for index, subnet in enumerate(subnet_values)
+                for other in subnet_values[index + 1 :]
+            ):
+                raise ValueError("derived subnets overlap")
+        except (TypeError, ValueError) as exc:
+            errors.append(f"{environment} VNet CIDR is invalid: {exc}")
+    for index, environment in enumerate(("dev", "test", "prod")):
+        for other_environment in ("dev", "test", "prod")[index + 1 :]:
+            if (
+                environment in environment_networks
+                and other_environment in environment_networks
+                and environment_networks[environment].overlaps(
+                    environment_networks[other_environment]
+                )
+            ):
+                errors.append(
+                    f"environment VNet CIDRs overlap: {environment} and {other_environment}"
+                )
+
+if not errors:
+    for environment in ("dev", "test", "prod"):
+        config_path = project_dir / f"config-infra-{environment}.yml"
+        config = {}
+        for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            value = value.strip()
+            if value.startswith('"') and value.endswith('"'):
+                value = json.loads(value)
+            config[key.strip()] = value
+        expected_values = {
+            "environment": environment,
+            "environment_name": environment_names[environment],
+            "workload_name": workload_name,
+            "namespace": namespace,
+            "model_name": "taxi-model",
+            "batch_compute_name": "cpu-cluster",
+            "private_network": "true",
+            "enable_managed_online_endpoint": "true",
+            "online_mlflow_no_code": "true",
+        }
+        if environment in network_cidrs:
+            expected_values.update(network_cidrs[environment])
+        for key, expected in expected_values.items():
+            if config.get(key) != expected:
+                errors.append(
+                    f"{config_path.name} {key} must be {expected!r}, got {config.get(key)!r}"
+                )
+        expected_jumpbox = "true" if environment == "dev" else "false"
+        if config.get("enable_dev_jumpbox") != expected_jumpbox:
+            errors.append(
+                f"{config_path.name} enable_dev_jumpbox must be {expected_jumpbox}"
+            )
+
+for error in errors:
+    print(f"ERROR: {error}", file=sys.stderr)
+if errors:
+    raise SystemExit(1)
+
+print(orchestration)
+print(namespace)
+print(workload_name)
+print(environment_names["dev"])
+print(environment_names["test"])
+print(environment_names["prod"])
+PY
+then
+  failures=$((failures + 1))
+fi
+
+if [ -s "$metadata_file" ]; then
+  orchestration=$(sed -n '1p' "$metadata_file")
+  namespace=$(sed -n '2p' "$metadata_file")
+  workload_name=$(sed -n '3p' "$metadata_file")
+  dev_environment_name=$(sed -n '4p' "$metadata_file")
+  test_environment_name=$(sed -n '5p' "$metadata_file")
+  prod_environment_name=$(sed -n '6p' "$metadata_file")
+else
+  orchestration=invalid
+  namespace=invalid
+  workload_name=invalid
+  dev_environment_name=invalid
+  test_environment_name=invalid
+  prod_environment_name=invalid
+fi
+
+for suffix in batch.csv data.csv request.json; do
+  require_path "data/$namespace-$suffix"
 done
 
-workflow_count=$(find "$project_dir/.github/workflows" -maxdepth 1 -type f -name '*.yml' | wc -l | tr -d ' ')
-if [ "$workflow_count" -ne "${#expected_workflows[@]}" ]; then
-  fail "Expected only the seven selected Python SDK v2 GitHub workflows; found $workflow_count"
+if grep -R -I -q -e '/Users/' "$project_dir" --exclude-dir=.git; then
+  fail "Local paths remain"
 fi
 
-if [ -e "$project_dir/.github/workflows/publish-online-runtime.yml" ] ||
-  [ -e "$project_dir/mlops/online-runtime" ]; then
-  fail "Generated no-code project must not contain runtime publication or custom online runtime assets"
+pipeline_roots=()
+[ -d "$project_dir/.github/workflows" ] && pipeline_roots+=("$project_dir/.github/workflows")
+[ -d "$project_dir/mlops/devops-pipelines" ] && pipeline_roots+=("$project_dir/mlops/devops-pipelines")
+if [ "${#pipeline_roots[@]}" -gt 0 ] &&
+  grep -R -I -q -e '__MLOPS_TEMPLATES_' -e 'classical/python-sdk-v2/' -e 'infrastructure/bicep/' \
+    "${pipeline_roots[@]}"; then
+  fail "Placeholders or source-template paths remain in generated pipeline files"
 fi
 
-if find "$project_dir" -path "$project_dir/.git" -prune -o \
-  \( -type d -name terraform -o -type d -name devops-pipelines -o -type f -name '*.tf' \) \
-  -print -quit | grep -q .; then
-  fail "Terraform or Azure DevOps assets remain in the generated project"
-fi
-
-if grep -R -I -q \
-  -e '__MLOPS_TEMPLATES_' \
-  -e 'AzureCLI@' \
-  -e 'Bash@' \
-  -e 'ado_service_connection' \
-  -e 'managed_devops_pool' \
+if grep -R -I -E -q \
+  -e 'AZURE_CREDENTIALS[[:space:]]*[:=]' \
+  -e 'secrets\.AZURE_CREDENTIALS' \
+  -e 'client[_-]?secret[[:space:]]*[:=]' \
+  -e '/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/' \
   "$project_dir" --exclude-dir=.git; then
-  fail "Unresolved placeholders or Azure DevOps-specific configuration remain"
+  fail "Credential-shaped values or live Azure resource IDs remain"
 fi
 
-if grep -R -I -q \
-  -e 'infrastructure/bicep/' \
-  -e 'classical/python-sdk-v2/' \
-  "$project_dir/.github/workflows"; then
-  fail "Source-template paths remain in generated GitHub workflows"
+escaped_workload_name=${workload_name//\'/\'\'}
+if ! grep -Fq "param workloadDisplayName string = '$escaped_workload_name'" \
+  "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq 'Project: workloadDisplayName' "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq 'Name: workloadDisplayName' "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq '"workload_name": "workloadDisplayName"' \
+    "$project_dir/mlops/scripts/render_bicep_parameters.py"; then
+  fail "Workload display name is not wired through config, Bicep parameters, and tags"
 fi
 
-if ! grep -R -I -q 'infrastructure/main\.bicep' "$project_dir/.github/workflows"; then
-  fail "Generated infrastructure workflow does not reference infrastructure/main.bicep"
+if ! grep -Fq -- "--model_name taxi-model" \
+  "$project_dir/mlops/azureml/train/job.yml" ||
+  grep -R -I -q -e 'model_name: taxifare' -e 'model_name: mlops' \
+    "$project_dir" --exclude-dir=.git; then
+  fail "The proven taxi-model asset contract changed"
 fi
 
-if ! grep -R -I -q 'mlops/azureml/train/job\.yml' "$project_dir/.github/workflows"; then
-  fail "Generated training workflow does not reference mlops/azureml/train/job.yml"
+if ! grep -Fq "display_name: \"$workload_name Training\"" \
+  "$project_dir/mlops/azureml/train/job.yml" ||
+  ! grep -Fq "experiment_name: $namespace-training" \
+    "$project_dir/mlops/azureml/train/job.yml" ||
+  ! grep -Fq "table_name: ${namespace}monitoring" \
+    "$project_dir/mlops/azureml/train/job.yml"; then
+  fail "Training metadata is not derived from workload naming inputs"
 fi
 
-if ! grep -Fq 'scoring_code_directory: mlops/azureml/deploy/batch' \
-  "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
-  ! grep -Fq 'scoring_script: score.py' \
-    "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
-  ! grep -Fq 'request_batch_file: data/taxi-batch.csv' \
-    "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
-  ! grep -Fq 'default: azureml://registries/azureml/environments/sklearn-1.5/versions/53' \
-    "$project_dir/.github/workflows/deploy-batch-endpoint.yml"; then
-  fail "Batch workflow must provide checked-in scoring code, live input, and the immutable curated environment"
-fi
-
-python3 - "$project_dir/mlops/azureml/deploy/batch/score.py" <<'PY' || failures=$((failures + 1))
+if ! python3 - "$project_dir/mlops/azureml/deploy/batch/score.py" <<'PY'
 import ast
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-tree = ast.parse(path.read_text(encoding="utf-8"))
+source = path.read_text(encoding="utf-8")
+tree = ast.parse(source)
 functions = {
-    node.name: node
+    node.name
     for node in tree.body
     if isinstance(node, ast.FunctionDef)
 }
-source = path.read_text(encoding="utf-8")
-errors = []
-if "init" not in functions or "run" not in functions:
-    errors.append("batch scoring source must define init() and run(mini_batch)")
-for required in (
+required = (
     "AZUREML_MODEL_DIR",
     "mlflow.pyfunc.load_model",
     "pd.read_csv",
@@ -153,524 +353,205 @@ for required in (
     "pd.concat",
     "if not mini_batch",
     "if result.empty",
-):
-    if required not in source:
-        errors.append(f"batch scoring source is missing {required}")
-if errors:
-    for error in errors:
-        print(f"ERROR: {error}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-
-if grep -R -I -q \
-  -e '/Users/' \
-  "$project_dir" --exclude-dir=.git; then
-  fail "Local paths remain"
-fi
-
-if grep -R -I -E -q \
-  -e 'AZURE_CREDENTIALS[[:space:]]*[:=]' \
-  -e 'secrets\.AZURE_CREDENTIALS' \
-  -e 'client[_-]?secret[[:space:]]*[:=]' \
-  "$project_dir" --exclude-dir=.git; then
-  fail "Credential-shaped values remain"
-fi
-
-if grep -R -I -E -q \
-  '/subscriptions/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/resourceGroups/' \
-  "$project_dir" --exclude-dir=.git; then
-  fail "A live Azure resource ID remains in the generated project"
-fi
-
-for environment in dev test prod; do
-  config_file="$project_dir/config-infra-$environment.yml"
-
-  if [ -f "$config_file" ]; then
-    if ! grep -Eq '^batch_compute_name:[[:space:]]*cpu-cluster[[:space:]]*$' "$config_file"; then
-      fail "config-infra-$environment.yml must use cpu-cluster for private workspace image builds"
-    fi
-
-    if ! grep -Eq '^runner_hub_vnet_resource_id:[[:space:]]*(""|'\'\'')[[:space:]]*$' "$config_file"; then
-      fail "config-infra-$environment.yml must leave runner_hub_vnet_resource_id empty"
-    fi
-
-    if ! grep -Eq '^manage_runner_hub_to_workload_peering:[[:space:]]*false[[:space:]]*$' "$config_file"; then
-      fail "config-infra-$environment.yml must default reciprocal runner-hub peering ownership to false"
-    fi
-  fi
-done
-
-python3 - "$project_dir/.mlops-generation.json" \
-  "$expected_project_template_url" \
-  "$expected_project_template_ref" \
-  "$expected_mlops_templates_repository" \
-  "$expected_mlops_templates_ref" <<'PY' || failures=$((failures + 1))
-import json
-import sys
-
-provenance_path, project_url, project_ref, templates_repository, templates_ref = sys.argv[1:]
-with open(provenance_path, encoding="utf-8") as provenance_file:
-    provenance = json.load(provenance_file)
-
-expected = {
-    "infrastructure_version": "bicep",
-    "project_type": "classical",
-    "mlops_version": "python-sdk-v2",
-    "orchestration": "github-actions",
-    "project_template_github_url": project_url,
-    "project_template_git_ref": project_ref,
-    "project_template_commit": project_ref,
-    "mlops_templates_repository": templates_repository,
-    "mlops_templates_git_ref": templates_ref,
-}
-
-if provenance != expected:
-    print(
-        "ERROR: Generation provenance does not match the expected immutable source chain.\n"
-        f"Expected: {expected}\n"
-        f"Actual:   {provenance}",
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
-PY
-
-if ! grep -Eq 'param systemNodeCount int = 2' "$project_dir/runner-bootstrap/infrastructure/main.bicep" ||
-  ! grep -Eq "param nodeVmSize string = 'Standard_D2ads_v6'" "$project_dir/runner-bootstrap/infrastructure/main.bicep"; then
-  fail "ARC system pool must default to two Standard_D2ads_v6 nodes"
-fi
-
-if ! grep -Eq 'SYSTEM_NODE_COUNT=.*:-2' "$project_dir/runner-bootstrap/scripts/deployment_config.sh" ||
-  ! grep -Fq 'self.assertEqual(result["required_vcpus"], 4)' "$project_dir/runner-bootstrap/tests/test_validate_compute_quota.py"; then
-  fail "ARC provisioning and quota validation must agree on two four-vCPU system nodes"
-fi
-
-if ! grep -Fq -- '- /home/runner/run.sh' "$project_dir/runner-bootstrap/helm/runner-set-values.yaml"; then
-  fail "ARC runner image must explicitly invoke /home/runner/run.sh"
-fi
-
-python3 - "$project_dir/.github/workflows/build-runner-image.yml" <<'PY' || failures=$((failures + 1))
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-source = path.read_text(encoding="utf-8")
-start = source.find("- name: Verify anonymous runner image pull")
-end = source.find("- name: Report immutable image", start)
-errors = []
-if start == -1 or end == -1:
-    errors.append("runner build workflow is missing the anonymous digest verification step")
-else:
-    verification = source[start:end]
-    required = (
-        'DIGEST: ${{ steps.build.outputs.digest }}',
-        'printf \'{"auths":{}}\\n\' > "$anonymous_config/config.json"',
-        'DOCKER_CONFIG="$anonymous_config"',
-        'docker buildx imagetools inspect "$IMAGE_NAME@$DIGEST"',
-        "Set the GHCR package visibility to Public, then rerun this workflow.",
-        "Do not add an imagePullSecret, PAT, or expiring token.",
-        "exit 1",
-    )
-    for contract in required:
-        if contract not in verification:
-            errors.append(f"anonymous runner verification is missing {contract}")
-    for forbidden in ("docker login", "gh auth token", "GITHUB_TOKEN", "password"):
-        if forbidden in verification:
-            errors.append(
-                f"anonymous runner verification must not use credentials: {forbidden}"
-            )
-if errors:
-    for error in errors:
-        print(f"ERROR: {error}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-
-python3 - "$project_dir/runner-bootstrap/scripts/invoke_aks_command.py" <<'PY' || failures=$((failures + 1))
-import ast
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-source = path.read_text(encoding="utf-8")
-ast.parse(source)
-required = (
-    'response["exitCode"]',
-    'response.get("provisioningState")',
-    'provisioning_state != "Succeeded" or exit_code != 0',
-    '"--output",\n        "json"',
-    'args.logs_output',
-    "os.O_WRONLY | os.O_CREAT | os.O_TRUNC",
-    "0o600",
-    "stream.write(raw_logs)",
 )
-missing = [contract for contract in required if contract not in source]
-if missing:
-    for contract in missing:
-        print(f"ERROR: AKS command wrapper is missing {contract}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-
-if grep -R -I -E -q \
-  -e 'gcr\.io/kaniko-project' \
-  -e '/kaniko/executor' \
-  -e 'KANIKO_EXECUTOR' \
-  "$project_dir/runner-bootstrap" \
-  "$project_dir/.github/workflows"; then
-  fail "Generated no-code project must not retain Kaniko runner or workflow tooling"
-fi
-
-if ! grep -Fq 'runner_image:' \
-  "$project_dir/.github/workflows/runner-smoke-test.yml" ||
-  ! grep -Fq -- '--logs-output "$pod_json"' \
-    "$project_dir/.github/workflows/runner-smoke-test.yml" ||
-  ! grep -Fq '.spec.containers[] | select(.name == "runner") | .image' \
-    "$project_dir/.github/workflows/runner-smoke-test.yml" ||
-  ! grep -Fq '[[ "$live_image" == "$EXPECTED_RUNNER_IMAGE" ]]' \
-    "$project_dir/.github/workflows/runner-smoke-test.yml"; then
-  fail "Runner smoke test must consume validated machine logs and verify the exact live image"
-fi
-
-if ! grep -Fq 'command="set -eu;' \
-  "$project_dir/runner-bootstrap/scripts/install_arc.sh" ||
-  ! grep -Fq 'runner-bootstrap/scripts/invoke_aks_command.py' \
-    "$project_dir/.github/workflows/update-runner-image.yml" ||
-  ! grep -Fq 'command="set -eu;' \
-    "$project_dir/.github/workflows/update-runner-image.yml" ||
-  ! grep -Fq 'runner_image must be this repository' \
-    "$project_dir/.github/workflows/update-runner-image.yml"; then
-  fail "ARC installation and runner updates must use POSIX remote commands, strict AKS exit validation, and immutable image inputs"
-fi
-
-python3 - "$project_dir/.github/workflows/update-runner-image.yml" <<'PY' || failures=$((failures + 1))
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-source = path.read_text(encoding="utf-8")
 errors = []
-for job in ("update", "reconcile"):
-    match = re.search(
-        rf"^  {job}:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:\n|\Z)",
-        source,
-        re.MULTILINE | re.DOTALL,
-    )
-    if match is None:
-        errors.append(f"runner image workflow is missing the {job} job")
-        continue
-    body = match.group("body")
-    if "    runs-on: ubuntu-24.04\n" not in body:
-        errors.append(f"runner image {job} job must use ubuntu-24.04")
-    if "runner-bootstrap/scripts/invoke_aks_command.py" not in body:
-        errors.append(f"runner image {job} job must use the strict AKS command helper")
-    if 'command="set -eu;' not in body:
-        errors.append(f"runner image {job} job must use POSIX set -eu remotely")
+if not {"init", "run"}.issubset(functions):
+    errors.append("batch scoring source must define init() and run(mini_batch)")
+errors.extend(
+    f"batch scoring source is missing {contract}"
+    for contract in required
+    if contract not in source
+)
+for error in errors:
+    print(f"ERROR: {error}", file=sys.stderr)
 if errors:
-    for error in errors:
-        print(f"ERROR: {error}", file=sys.stderr)
     raise SystemExit(1)
 PY
-
-if grep -R -I -F -q 'az aks command invoke' \
-  "$project_dir/runner-bootstrap/scripts" \
-  "$project_dir/.github/workflows/update-runner-image.yml"; then
-  fail "ARC scripts and update workflow must route AKS Run Command through the exitCode-validating wrapper"
+then
+  failures=$((failures + 1))
 fi
 
-if ! grep -Fq "var keyVaultPrefix = take(replace(toLower(prefix), '-', ''), 5)" "$project_dir/infrastructure/main.bicep" ||
-  ! grep -Fq "var keyVaultEnvironment = take(replace(toLower(env), '-', ''), 3)" "$project_dir/infrastructure/main.bicep" ||
-  ! grep -Fq '@maxLength(24)' "$project_dir/infrastructure/modules/key_vault.bicep"; then
-  fail "Key Vault naming must be capped at 24 characters"
-fi
-
-if ! grep -Fq 'sharedPrivateDnsZoneResourceIds object = {}' "$project_dir/infrastructure/modules/private_dns_zones.bicep" ||
-  ! grep -Fq "module vnetLink './private_dns_zone_vnet_link.bicep'" "$project_dir/infrastructure/modules/private_dns_zones.bicep" ||
-  ! grep -Eq "resource privateDnsZone .* existing = " "$project_dir/infrastructure/modules/private_dns_zone_vnet_link.bicep"; then
-  fail "Private DNS deployment must reuse configured zones and manage workload VNet links"
-fi
-
-if ! grep -Fq "resource trustedAccess 'Microsoft.ContainerService/managedClusters/trustedAccessRoleBindings@" \
-  "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
-  ! grep -Fq "'Microsoft.MachineLearningServices/workspaces/mlworkload'" \
-    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
-  ! grep -Fq "allowInsecureConnections: 'False'" \
-    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
-  ! grep -Fq 'sslCertPemFile: extensionTlsCertPem' \
-    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
-  ! grep -Fq 'sslKeyPemFile: extensionTlsKeyPem' \
-    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
-  ! grep -Fq "'nodeSelector.ml\\\\.azure\\\\.com/inference': 'true'" \
-    "$project_dir/infrastructure/modules/aks_aml_inference.bicep"; then
-  fail "Private AKS inference must retain Trusted Access, flattened node selection, and protected TLS configuration"
-fi
-
-if grep -Fq "nodeSelector: 'ml.azure.com/inference=true'" \
-  "$project_dir/infrastructure/modules/aks_aml_inference.bicep"; then
-  fail "Azure ML extension node selection must use the flattened configuration setting"
-fi
-
-if grep -R -I -q \
-  -e 'Microsoft.Resources/deploymentScripts' \
-  -e "kind: 'AzureCLI'" \
-  "$project_dir/infrastructure"; then
-  fail "Private AKS namespace bootstrap must not use Azure Deployment Scripts"
-fi
-
-if ! grep -Fq "'Microsoft.ContainerService/managedClusters/runCommand/action'" \
-  "$project_dir/infrastructure/modules/aks_run_command_role.bicep" ||
-  ! grep -Fq "'Microsoft.ContainerService/managedClusters/commandResults/read'" \
-    "$project_dir/infrastructure/modules/aks_run_command_role.bicep" ||
-  ! grep -Fq 'param namespaceBootstrapPrincipalId string' \
-    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
-  ! grep -Fq 'principalId: namespaceBootstrapPrincipalId' \
-    "$project_dir/infrastructure/modules/aks_aml_inference.bicep" ||
-  ! grep -Fq 'namespaceBootstrapPrincipalId: ciPrincipalObjectId' \
-    "$project_dir/infrastructure/main.bicep"; then
-  fail "Private AKS namespace bootstrap must assign the minimal Run Command role to the CI OIDC principal"
-fi
-
-if ! grep -Fq 'kind: Namespace' \
-  "$project_dir/infrastructure/manifests/azureml-inference-namespace.yaml" ||
-  ! grep -Fq 'kind: ServiceAccount' \
-    "$project_dir/infrastructure/manifests/azureml-inference-namespace.yaml" ||
-  ! grep -Fq 'completePrivateAksInferenceDeployment=false' \
-    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
-  ! grep -Fq 'content.replace("__ONLINE_NAMESPACE__", namespace)' \
-    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
-  ! grep -Fq '"__ONLINE_INFERENCE_IDENTITY_CLIENT_ID__"' \
-    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
-  ! grep -Fq 'if "__ONLINE_" in content:' \
-    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
-  ! grep -Fq 'bootstrap_succeeded=false' \
-    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
-  ! grep -Fq 'runner-bootstrap/scripts/invoke_aks_command.py' \
-    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
-  ! grep -Fq -- '--command "kubectl apply -f $(basename "$namespace_manifest")"' \
-    "$project_dir/.github/workflows/deploy-infrastructure.yml"; then
-  fail "Infrastructure workflow must own strict, idempotent namespace and service-account bootstrap"
-fi
-
-if ! grep -Fq "disableLocalAuth: true" \
-  "$project_dir/infrastructure/modules/aml_kubernetes_compute.bicep" ||
+if ! grep -Fq 'enableManagedOnlineEndpoint bool = true' \
+  "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq "module onlineEndpointIdentity './modules/aml_online_endpoint_identity.bicep'" \
+    "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq 'enableDeploymentLocks: enableManagedOnlineEndpoint' \
+    "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq "managedNetworkKind: 'V1'" \
+    "$project_dir/infrastructure/modules/aml_workspace.bicep" ||
   ! grep -Fq "publicNetworkAccess: enableNetworkIsolation ? 'Disabled' : 'Enabled'" \
     "$project_dir/infrastructure/modules/aml_workspace.bicep" ||
   ! grep -Fq 'allowSharedKeyAccess: false' \
     "$project_dir/infrastructure/modules/storage_account.bicep"; then
-  fail "Private AML compute, workspace networking, and storage local-auth policies changed"
+  fail "Private managed-online infrastructure or local-auth security changed"
 fi
 
-python3 - "$project_dir/.github/workflows/deploy-online-endpoint.yml" <<'PY' || failures=$((failures + 1))
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-source = path.read_text(encoding="utf-8")
-errors = []
-for contract in (
-    "tls_ca_key_vault_secret_id:",
-    "endpoint_uami_resource_id:",
-    "mlflow_no_code: ${{ steps.config.outputs.online_mlflow_no_code }}",
-):
-    if contract not in source:
-        errors.append(f"online workflow is missing {contract}")
-
-match = re.search(
-    r"^  online-mlflow-no-code:\n(?P<body>.*?)(?=^  online-image-only:\n|\Z)",
-    source,
-    re.MULTILINE | re.DOTALL,
-)
-if match is None:
-    errors.append("online workflow is missing the explicit MLflow no-code job")
-else:
-    body = match.group("body")
-    for contract in (
-        "if: needs.config.outputs.mlflow_no_code == 'true'",
-        "mlflow_no_code: true",
-        "tls_ca_key_vault_secret_id:",
-        "endpoint_uami_resource_id:",
-    ):
-        if contract not in body:
-            errors.append(f"MLflow no-code job is missing {contract}")
-    for forbidden in (
-        "environment_name:",
-        "environment_version:",
-        "environment_image:",
-        "scoring_code:",
-        "scoring_script:",
-    ):
-        if forbidden in body:
-            errors.append(f"MLflow no-code job must omit {forbidden}")
-
-if errors:
-    for error in errors:
-        print(f"ERROR: {error}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-
-if ! grep -Fq 'online_mlflow_no_code: true' "$project_dir/config-infra-dev.yml" ||
-  ! grep -Fq 'online_environment_name: ""' "$project_dir/config-infra-dev.yml" ||
-  ! grep -Fq 'online_environment_version: ""' "$project_dir/config-infra-dev.yml" ||
-  ! grep -Fq 'online_environment_image: ""' "$project_dir/config-infra-dev.yml" ||
-  ! grep -Fq "module amlOnlineEnvironment './modules/aml_environment.bicep' = if (enablePrivateAksInference && !onlineMlflowNoCode)" \
+if ! grep -Fq "param enableDevJumpbox bool = env == 'dev'" \
+  "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq "param devJumpboxVmSize string = 'Standard_D2s_v5'" \
     "$project_dir/infrastructure/main.bicep" ||
-  ! grep -Fq "output onlineEnvironmentId string = enablePrivateAksInference && !onlineMlflowNoCode ? amlOnlineEnvironment!.outputs.environmentId : ''" \
+  ! grep -Fq "param devJumpboxUbuntuImageVersion string = '24.04.202608270'" \
+    "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq "param devJumpboxAzureMlExtensionVersion string = '2.44.1'" \
+    "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq "param devJumpboxAzureAiMlVersion string = '1.35.0'" \
     "$project_dir/infrastructure/main.bicep"; then
-  fail "Generated project must default to MLflow no-code and create a workspace environment only for image-only mode"
+  fail "Dev-only jumpbox or immutable tool/image versions changed"
 fi
 
 if ! grep -Fq '"batch_compute_name": "imageBuildComputeName"' \
-  "$project_dir/mlops/scripts/render_bicep_parameters.py"; then
-  fail "Bicep parameter rendering must map batch_compute_name to imageBuildComputeName"
+  "$project_dir/mlops/scripts/render_bicep_parameters.py" ||
+  ! grep -Fq 'imageBuildCompute: imageBuildComputeName' \
+    "$project_dir/infrastructure/modules/aml_workspace.bicep" ||
+  ! grep -Fq 'computeClusterName: imageBuildComputeName' \
+    "$project_dir/infrastructure/main.bicep"; then
+  fail "Workspace imageBuildCompute and batch compute naming diverged"
 fi
 
-python3 - "$project_dir/infrastructure/main.bicep" \
-  "$project_dir/infrastructure/modules/aml_workspace.bicep" \
-  "$project_dir/infrastructure" <<'PY' || failures=$((failures + 1))
-import re
-import sys
-from pathlib import Path
-
-main_path, workspace_path, infrastructure_path = map(Path, sys.argv[1:])
-main = main_path.read_text(encoding="utf-8")
-workspace = workspace_path.read_text(encoding="utf-8")
-
-errors = []
-workspace_puts = []
-workspace_resource = re.compile(
-    r"resource\s+\w+\s+'Microsoft\.MachineLearningServices/workspaces@2025-06-01'\s*="
-)
-for bicep_path in infrastructure_path.rglob("*.bicep"):
-    source = bicep_path.read_text(encoding="utf-8")
-    workspace_puts.extend(
-        f"{bicep_path.relative_to(infrastructure_path)}:{match.start()}"
-        for match in workspace_resource.finditer(source)
-    )
-if len(workspace_puts) != 1:
-    errors.append(
-        "AML infrastructure must contain exactly one initial workspace PUT at API "
-        f"2025-06-01; found {workspace_puts}"
-    )
-if "managedNetwork" in workspace:
-    errors.append("AML workspace must use the custom VNet path without managedNetwork")
-if "serverlessComputeSettings" in workspace:
-    errors.append("AML workspace must not set serverlessComputeSettings")
-if "computeSubnetId" in workspace:
-    errors.append("AML workspace module must not accept computeSubnetId")
-if "param imageBuildComputeName string" not in workspace:
-    errors.append("AML workspace module must accept the generated image build compute name")
-if "imageBuildCompute: imageBuildComputeName" not in workspace:
-    errors.append(
-        "AML workspace initial PUT must set properties.imageBuildCompute declaratively"
-    )
-
-mlw_start = main.find("module mlw './modules/aml_workspace.bicep'")
-mlw_end = main.find("module peMlw ", mlw_start)
-if mlw_start == -1 or mlw_end == -1:
-    errors.append("AML workspace module invocation was not found")
-elif "computeSubnetId" in main[mlw_start:mlw_end]:
-    errors.append("AML workspace invocation must not pass computeSubnetId")
-elif "imageBuildComputeName: imageBuildComputeName" not in main[mlw_start:mlw_end]:
-    errors.append(
-        "AML workspace invocation must receive the top-level imageBuildComputeName"
-    )
-elif "mlwcc" in main[mlw_start:mlw_end]:
-    errors.append("AML workspace creation must not depend on the compute child resource")
-
-mlwcc_start = main.find("module mlwcc './modules/aml_computecluster.bicep'")
-mlwcc_end = main.find("module amlReg ", mlwcc_start)
-if mlwcc_start == -1 or mlwcc_end == -1:
-    errors.append("AML compute cluster module invocation was not found")
-elif "subnetId: enableVNet ? vnet!.outputs.computeSubnetId : ''" not in main[mlwcc_start:mlwcc_end]:
-    errors.append("AML compute cluster must retain the compute subnet")
-elif "computeClusterName: imageBuildComputeName" not in main[mlwcc_start:mlwcc_end]:
-    errors.append(
-        "AML compute cluster and workspace imageBuildCompute must use the same name"
-    )
-elif "dependsOn: [\n    peMlw\n  ]" not in main[mlwcc_start:mlwcc_end]:
-    errors.append("AML compute cluster must explicitly depend on the workspace private endpoint")
-
-if "param imageBuildComputeName string" not in main:
-    errors.append(
-        "Top-level Bicep must expose imageBuildComputeName for batch_compute_name"
-    )
-
-if errors:
-    for error in errors:
-        print(f"ERROR: {error}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-
-expected_workflow_source="$expected_mlops_templates_repository/.github/workflows/python-sdk-v2-"
-workflow_source_count=$(grep -R -I -F -h "uses: $expected_workflow_source" \
-  "$project_dir/.github/workflows"/*.yml | wc -l | tr -d ' ')
-if [ "$workflow_source_count" -ne 4 ]; then
-  fail "Expected four Python SDK v2 reusable workflow calls from $expected_mlops_templates_repository"
+if ! grep -Fq 'DEV_JUMPBOX_LOGIN_GROUP_ID' \
+  "$project_dir/mlops/scripts/render_bicep_parameters.py" ||
+  ! grep -Fq 'uuid.UUID(dev_jumpbox_login_group_id)' \
+    "$project_dir/mlops/scripts/render_bicep_parameters.py" ||
+  ! grep -Fq 'canonical_group_id != dev_jumpbox_login_group_id' \
+    "$project_dir/mlops/scripts/render_bicep_parameters.py"; then
+  fail "Dev jumpbox login group runtime override is missing canonical UUID validation"
 fi
 
-if grep -R -I -F -h "uses: $expected_workflow_source" \
-  "$project_dir/.github/workflows"/*.yml |
-  grep -F -v -q "@$expected_mlops_templates_ref"; then
-  fail "Python SDK v2 reusable workflows are not pinned to $expected_mlops_templates_ref"
+if ! grep -Fq "var keyVaultPrefix = take(replace(toLower(prefix), '-', ''), 5)" \
+  "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq '@maxLength(24)' \
+    "$project_dir/infrastructure/modules/key_vault.bicep" ||
+  ! grep -Fq 'sharedPrivateDnsZoneResourceIds object = {}' \
+    "$project_dir/infrastructure/modules/private_dns_zones.bicep"; then
+  fail "Key Vault length or shared private DNS contracts changed"
 fi
 
-sdk_ref_count=$(grep -R -I -F -h "sdk_ref: $expected_mlops_templates_ref" \
-  "$project_dir/.github/workflows"/*.yml | wc -l | tr -d ' ')
-if [ "$sdk_ref_count" -ne 4 ]; then
-  fail "Expected four Python SDK v2 SDK checkouts pinned to $expected_mlops_templates_ref"
+if ! grep -Fq -- '- /home/runner/run.sh' \
+  "$project_dir/runner-bootstrap/helm/runner-set-values.yaml" ||
+  ! grep -Fq "param nodeVmSize string = 'Standard_D2ads_v6'" \
+    "$project_dir/runner-bootstrap/infrastructure/main.bicep" ||
+  ! grep -Eq 'SYSTEM_NODE_COUNT=.*:-2' \
+    "$project_dir/runner-bootstrap/scripts/deployment_config.sh" ||
+  ! grep -Fq 'response["exitCode"]' \
+    "$project_dir/runner-bootstrap/scripts/invoke_aks_command.py" ||
+  ! grep -Fq 'response.get("provisioningState")' \
+    "$project_dir/runner-bootstrap/scripts/invoke_aks_command.py"; then
+  fail "Hardened ARC runner, quota, or AKS command contracts changed"
 fi
 
-templates_checkout=$(mktemp -d "${TMPDIR:-/tmp}/mlops-templates-contract.XXXXXX")
-trap 'rm -rf "$templates_checkout"' EXIT
-if ! git -C "$templates_checkout" init -q ||
-  ! git -C "$templates_checkout" remote add origin \
-    "https://github.com/$expected_mlops_templates_repository.git" ||
-  ! git -C "$templates_checkout" fetch -q --depth 1 origin \
-    "$expected_mlops_templates_ref" ||
-  ! git -C "$templates_checkout" checkout -q FETCH_HEAD -- \
-    .github/workflows/python-sdk-v2-batch.yml \
-    .github/workflows/python-sdk-v2-online.yml \
-    src/python-sdk-v2/aml_client.py \
-    src/python-sdk-v2/create_batch_deployment.py \
-    src/python-sdk-v2/create_online_deployment.py; then
-  fail "Unable to inspect the pinned mlops-templates source contract"
-else
-  if ! grep -Fq 'CodeConfiguration' \
-    "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'def _materialize_build_environment(' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'def _materialize_image_environment(' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'def resolve_batch_environment(' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'ml_client.environments.create_or_update(environment)' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'SOURCE_MANIFEST_PROPERTY' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'SOURCE_PROVENANCE_PROPERTIES' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'def _environment_provenance(' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'tags = getattr(environment, "tags", None)' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'Workspace environment contains conflicting registry provenance.' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'verify_live_deployment(' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'refusing to invoke a deployment that could synthesize an anonymous' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'environment=environment' \
-      "$templates_checkout/src/python-sdk-v2/create_batch_deployment.py" ||
-    ! grep -Fq 'AzureCliCredential()' \
-      "$templates_checkout/src/python-sdk-v2/aml_client.py" ||
-    ! grep -Fq 'use_private_ca_bundle' \
-      "$templates_checkout/src/python-sdk-v2/aml_client.py" ||
-    ! grep -Fq 'mlflow_no_code' \
-      "$templates_checkout/src/python-sdk-v2/create_online_deployment.py" ||
-    ! grep -Fq 'id-token: write' \
-      "$templates_checkout/.github/workflows/python-sdk-v2-batch.yml" ||
-    ! grep -Fq 'id-token: write' \
-      "$templates_checkout/.github/workflows/python-sdk-v2-online.yml"; then
-    fail "Pinned mlops-templates source lacks registry-to-workspace batch environment materialization, normalized provenance, explicit batch code, no-code online deployment, live verification, OIDC, or private CA contracts"
+if [ "$orchestration" = github-actions ]; then
+  require_path ".github/workflows"
+  if [ -d "$project_dir/mlops/devops-pipelines" ]; then
+    fail "Azure DevOps pipelines remain in GitHub Actions generation"
+  fi
+
+  expected_workflows=(
+    build-runner-image.yml
+    update-runner-image.yml
+    deploy-infrastructure.yml
+    train-register-model.yml
+    deploy-online-endpoint.yml
+    deploy-batch-endpoint.yml
+    runner-smoke-test.yml
+  )
+  for workflow in "${expected_workflows[@]}"; do
+    require_path ".github/workflows/$workflow"
+  done
+
+  for workflow in \
+    deploy-infrastructure.yml \
+    train-register-model.yml \
+    deploy-online-endpoint.yml \
+    deploy-batch-endpoint.yml; do
+    path="$project_dir/.github/workflows/$workflow"
+    if ! grep -Fq "description: \"$workload_name environment to target\"" "$path" ||
+      ! grep -Fq "default: \"$dev_environment_name\"" "$path" ||
+      ! grep -Fq "options: [\"$dev_environment_name\", \"$test_environment_name\", \"$prod_environment_name\"]" "$path"; then
+      fail "$workflow does not expose the configured human environment input labels"
+    fi
+    for mapping in \
+      "\"$dev_environment_name\") environment=dev ;;" \
+      "\"$test_environment_name\") environment=test ;;" \
+      "\"$prod_environment_name\") environment=prod ;;"; do
+      if ! grep -Fq "$mapping" "$path"; then
+        fail "$workflow is missing environment mapping: $mapping"
+      fi
+    done
+  done
+
+  if ! grep -Fq 'environment: ${{ needs.config.outputs.environment_name }}' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml" ||
+    ! grep -Fq 'environment: ${{ needs.config.outputs.environment_name }}' \
+      "$project_dir/.github/workflows/train-register-model.yml" ||
+    ! grep -Fq 'environment: ${{ needs.config.outputs.environment_name }}' \
+      "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
+    ! grep -Fq 'environment: ${{ inputs.environment }}' \
+      "$project_dir/.github/workflows/deploy-online-endpoint.yml"; then
+    fail "GitHub jobs do not use the configured display labels"
+  fi
+  if [ "$(grep -F -c 'DEV_JUMPBOX_LOGIN_GROUP_ID: ${{ vars.DEV_JUMPBOX_LOGIN_GROUP_ID }}' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml")" -ne 2 ]; then
+    fail "GitHub infrastructure validation and deployment must pass the jumpbox login group variable"
+  fi
+
+  if ! grep -Fq "request_batch_file: data/$namespace-batch.csv" \
+    "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
+    ! grep -Fq -- "--request-file data/$namespace-request.json" \
+      "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
+    ! grep -Fq 'az ml workspace provision-network' \
+      "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
+    ! grep -Fq -- '--alternate-deployment-name' \
+      "$project_dir/.github/workflows/deploy-online-endpoint.yml"; then
+    fail "GitHub batch or managed-online endpoint behavior changed"
+  fi
+
+  expected_workflow_source="$expected_mlops_templates_repository/.github/workflows/python-sdk-v2-"
+  workflow_source_count=$(grep -R -I -F -h "uses: $expected_workflow_source" \
+    "$project_dir/.github/workflows"/*.yml | wc -l | tr -d ' ')
+  if [ "$workflow_source_count" -ne 2 ]; then
+    fail "Expected two reusable Python SDK v2 workflow calls"
+  fi
+  if grep -R -I -F -h "uses: $expected_workflow_source" \
+    "$project_dir/.github/workflows"/*.yml |
+    grep -F -v -q "@$expected_mlops_templates_ref"; then
+    fail "Reusable workflows are not pinned to $expected_mlops_templates_ref"
+  fi
+
+  if ! python3 "$project_dir/mlops/scripts/validate_project.py" \
+    --require-resolved-templates; then
+    fail "Generated project self-validation failed"
+  fi
+elif [ "$orchestration" = azure-devops ]; then
+  if [ -d "$project_dir/.github/workflows" ]; then
+    fail "GitHub workflows remain in Azure DevOps generation"
+  fi
+  for pipeline in \
+    deploy-infrastructure-pipeline.yml \
+    deploy-online-endpoint-pipeline.yml \
+    deploy-batch-endpoint-pipeline.yml \
+    deploy-model-training-pipeline.yml; do
+    require_path "mlops/devops-pipelines/$pipeline"
+  done
+
+  infrastructure_pipeline="$project_dir/mlops/devops-pipelines/deploy-infrastructure-pipeline.yml"
+  online_pipeline="$project_dir/mlops/devops-pipelines/deploy-online-endpoint-pipeline.yml"
+  if ! grep -Fq 'REQUIRED_PRIVATE_SELF_HOSTED_POOL|Azure\ Pipelines|Default)' \
+    "$infrastructure_pipeline" ||
+    ! grep -Fq 'if [[ -z "${idToken:-}" ]]' "$infrastructure_pipeline" ||
+    ! grep -Fq 'infrastructure/parameters.json' "$infrastructure_pipeline" ||
+    ! grep -Fq 'condition: and(succeeded(), eq(' "$infrastructure_pipeline" ||
+    ! grep -Fq 'name: devJumpboxLoginGroupId' "$infrastructure_pipeline" ||
+    [ "$(grep -F -c 'DEV_JUMPBOX_LOGIN_GROUP_ID: ${{ parameters.devJumpboxLoginGroupId }}' \
+      "$infrastructure_pipeline")" -ne 2 ] ||
+    grep -Fq 'vmImage:' "$infrastructure_pipeline"; then
+    fail "Azure DevOps infrastructure pipeline is not private, gated, and workload-identity based"
+  fi
+  if ! grep -Fq 'REQUIRED_PRIVATE_SELF_HOSTED_POOL|Azure\ Pipelines|Default)' \
+    "$online_pipeline" ||
+    ! grep -Fq 'if [[ -z "${idToken:-}" ]]' "$online_pipeline" ||
+    ! grep -Fq 'az ml workspace provision-network' "$online_pipeline" ||
+    ! grep -Fq -- "--request-file data/$namespace-request.json" "$online_pipeline"; then
+    fail "Azure DevOps online pipeline is not private managed-online with workload identity"
   fi
 fi
 

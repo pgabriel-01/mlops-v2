@@ -1,0 +1,187 @@
+name: deploy-private-managed-online-infrastructure
+
+trigger: none
+pr: none
+lockBehavior: sequential
+
+parameters:
+  - name: environment
+    displayName: Environment
+    type: string
+    default: dev
+    values:
+      - dev
+      - test
+      - prod
+  - name: deploy
+    displayName: Deploy after validation
+    type: boolean
+    default: false
+  - name: privateAgentPool
+    displayName: Private self-hosted Linux agent pool
+    type: string
+    default: REQUIRED_PRIVATE_SELF_HOSTED_POOL
+  - name: azureServiceConnection
+    displayName: Workload identity service connection
+    type: string
+    default: REQUIRED_WORKLOAD_IDENTITY_SERVICE_CONNECTION
+  - name: devJumpboxLoginGroupId
+    displayName: Optional Dev jumpbox login group object ID
+    type: string
+    default: ''
+
+stages:
+  - stage: ValidateInfrastructure
+    displayName: Validate private infrastructure
+    jobs:
+      - job: Validate
+        pool:
+          name: ${{ parameters.privateAgentPool }}
+          demands:
+            - Agent.OS -equals Linux
+        steps:
+          - checkout: self
+          - bash: |
+              set -euo pipefail
+              pool='${{ parameters.privateAgentPool }}'
+              case "$pool" in
+                REQUIRED_PRIVATE_SELF_HOSTED_POOL|Azure\ Pipelines|Default)
+                  echo "A named private self-hosted Linux agent pool is required." >&2
+                  exit 2
+                  ;;
+              esac
+              python3 mlops/scripts/export_config.py \
+                "config-infra-${{ parameters.environment }}.yml" \
+                --azure-devops
+            displayName: Validate private pool and load configuration
+          - task: AzureCLI@2
+            displayName: Validate Bicep deployment
+            env:
+              DEV_JUMPBOX_LOGIN_GROUP_ID: ${{ parameters.devJumpboxLoginGroupId }}
+            inputs:
+              azureSubscription: ${{ parameters.azureServiceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              inlineScript: |
+                set -euo pipefail
+                if [[ -z "${idToken:-}" ]]; then
+                  echo "The Azure service connection must use workload identity federation." >&2
+                  exit 2
+                fi
+                sp_object_id="$(
+                  az ad sp show \
+                    --id "$servicePrincipalId" \
+                    --query id \
+                    --output tsv
+                )"
+                [[ -n "$sp_object_id" ]] || {
+                  echo "Unable to resolve the workload identity service principal object ID." >&2
+                  exit 2
+                }
+                if [[ "$(enable_dev_jumpbox)" == "true" ]]; then
+                  base_name="$(resource_group)"
+                  base_name="${base_name#rg-}"
+                  python3 mlops/scripts/check_legacy_bastion.py \
+                    --resource-group "$(resource_group)" \
+                    --base-name "$base_name"
+                  az vm image show \
+                    --location "$(location)" \
+                    --urn "Canonical:ubuntu-24_04-lts:server:$(dev_jumpbox_ubuntu_image_version)" \
+                    --only-show-errors \
+                    --output none
+                fi
+                AZURE_PRINCIPAL_OBJECT_ID="$sp_object_id" \
+                  python3 mlops/scripts/render_bicep_parameters.py \
+                    "config-infra-${{ parameters.environment }}.yml" \
+                    infrastructure/parameters.json
+                az bicep build --file infrastructure/main.bicep
+                az deployment sub validate \
+                  --name "mlops-validate-$(Build.BuildId)" \
+                  --location "$(location)" \
+                  --template-file infrastructure/main.bicep \
+                  --parameters @infrastructure/parameters.json
+
+  - stage: DeployInfrastructure
+    displayName: Deploy private infrastructure
+    dependsOn: ValidateInfrastructure
+    condition: and(succeeded(), eq('${{ parameters.deploy }}', 'true'))
+    jobs:
+      - deployment: Deploy
+        environment: ${{ parameters.environment }}
+        pool:
+          name: ${{ parameters.privateAgentPool }}
+          demands:
+            - Agent.OS -equals Linux
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - bash: |
+                    set -euo pipefail
+                    pool='${{ parameters.privateAgentPool }}'
+                    case "$pool" in
+                      REQUIRED_PRIVATE_SELF_HOSTED_POOL|Azure\ Pipelines|Default)
+                        echo "A named private self-hosted Linux agent pool is required." >&2
+                        exit 2
+                        ;;
+                    esac
+                    python3 mlops/scripts/export_config.py \
+                      "config-infra-${{ parameters.environment }}.yml" \
+                      --azure-devops
+                  displayName: Validate private pool and load configuration
+                - task: AzureCLI@2
+                  displayName: Deploy Bicep
+                  env:
+                    DEV_JUMPBOX_LOGIN_GROUP_ID: ${{ parameters.devJumpboxLoginGroupId }}
+                  inputs:
+                    azureSubscription: ${{ parameters.azureServiceConnection }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    inlineScript: |
+                      set -euo pipefail
+                      if [[ -z "${idToken:-}" ]]; then
+                        echo "The Azure service connection must use workload identity federation." >&2
+                        exit 2
+                      fi
+                      sp_object_id="$(
+                        az ad sp show \
+                          --id "$servicePrincipalId" \
+                          --query id \
+                          --output tsv
+                      )"
+                      [[ -n "$sp_object_id" ]] || {
+                        echo "Unable to resolve the workload identity service principal object ID." >&2
+                        exit 2
+                      }
+                      if [[ "$(enable_dev_jumpbox)" == "true" ]]; then
+                        base_name="$(resource_group)"
+                        base_name="${base_name#rg-}"
+                        python3 mlops/scripts/check_legacy_bastion.py \
+                          --resource-group "$(resource_group)" \
+                          --base-name "$base_name"
+                      fi
+                      AZURE_PRINCIPAL_OBJECT_ID="$sp_object_id" \
+                        python3 mlops/scripts/render_bicep_parameters.py \
+                          "config-infra-${{ parameters.environment }}.yml" \
+                          infrastructure/parameters.json
+                      az deployment sub create \
+                        --name "mlops-${{ parameters.environment }}-$(Build.BuildId)" \
+                        --location "$(location)" \
+                        --template-file infrastructure/main.bicep \
+                        --parameters @infrastructure/parameters.json
+                      actual_image_build_compute="$(
+                        az resource show \
+                          --resource-group "$(resource_group)" \
+                          --name "$(workspace_name)" \
+                          --resource-type Microsoft.MachineLearningServices/workspaces \
+                          --api-version 2025-06-01 \
+                          --query properties.imageBuildCompute \
+                          --output tsv
+                      )"
+                      [[ "$actual_image_build_compute" == "$(batch_compute_name)" ]] || {
+                        echo "AML workspace image build compute mismatch: expected $(batch_compute_name), got ${actual_image_build_compute:-<empty>}" >&2
+                        exit 1
+                      }

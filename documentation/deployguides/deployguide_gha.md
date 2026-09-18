@@ -80,6 +80,10 @@ If using WSL, complete all setup within the Unix environment:
    * **mlops_version** selects your preferred interaction approach with Azure Machine Learning
    * **git_folder_location** points to the root project directory to which you cloned mlops-v2 in step 3
    * **project_name** is the name (case sensitive) of your project. A  GitHub repository will be created with this name
+   * **workload_name** is the human-readable workload display name used in workflow titles, tags, and Azure ML job metadata.
+   * **workload_namespace** is the lowercase Azure-safe namespace used for resource names, experiment names, and sample data paths.
+   * **dev_vnet_cidr**, **test_vnet_cidr**, and **prod_vnet_cidr** are explicit private, mutually non-overlapping workload VNet address spaces. The generator derives each environment's default, compute, private-endpoint, Bastion, and administration subnets and fails if a CIDR is malformed, too small, or overlaps another generated environment.
+   * **dev_environment_name**, **test_environment_name**, and **prod_environment_name** are human-facing workflow input labels. GitHub Environment objects are case-insensitive and cannot be renamed, but the OIDC `sub` claim preserves the exact casing used by the workflow `environment:` value. Federated-identity credential subjects must therefore match these generated labels exactly. Configuration filenames and Azure suffixes remain lowercase `dev`, `test`, and `prod`.
    * **github_org_name** is your GitHub organization (or GitHub username)
    * **project_template_github_url** is the URL to the original or your generated clone of the mlops_project_template repository from step 1
    * **project_template_git_ref** is the branch, tag, or commit to fetch. Use an immutable commit SHA for repeatable validation.
@@ -105,6 +109,17 @@ If using WSL, complete all setup within the Unix environment:
       
       #replace with your project name
       project_name=taxi-fare-regression   
+
+      #workload identity; these values are explicit generator inputs
+      workload_name='Taxi Fare Prediction'
+      workload_namespace=taxifare
+      #example only: verify all three ranges are unused in your network estate
+      dev_vnet_cidr=10.242.0.0/16
+      test_vnet_cidr=10.243.0.0/16
+      prod_vnet_cidr=10.244.0.0/16
+      dev_environment_name=Dev
+      test_environment_name=Test
+      prod_environment_name=Prod
       
       #replace with your github org name
       github_org_name=<orgname>
@@ -113,7 +128,7 @@ If using WSL, complete all setup within the Unix environment:
       project_template_github_url=https://github.com/pgabriel-01/mlops-project-template
 
       #use an immutable commit SHA for repeatable generation
-      project_template_git_ref=4e394feb04c19d8d79f1040205f36f7166ca4a71
+      project_template_git_ref=60fd56455926b2e1391334cc7b292a84d273b3c4
 
       #pin reusable workflow calls to an immutable commit
       mlops_templates_repository=pgabriel-01/mlops-templates
@@ -125,6 +140,37 @@ If using WSL, complete all setup within the Unix environment:
       #options: github-actions / azure-devops
       orchestration=github-actions 
    ```
+   The generated Taxi Fare Prediction project intentionally retains the
+   registered model asset name `taxi-model`, preserving the proven batch and
+   online deployment contract while the workload namespace controls the other
+   machine-owned identifiers.
+
+   The title-cased workflow choices do not create parallel GitHub Environment
+   objects. Selecting `Dev` resolves to the canonical `dev` Environment object,
+   but the workflow's OIDC assertion ends in `:environment:Dev`. Entra subject
+   comparison is case-sensitive, so provision federated credentials ending in
+   `:environment:Dev`, `:environment:Test`, and `:environment:Prod` for the
+   default labels. A lowercase compatibility credential may coexist, but it does
+   not replace the exact title-case subject emitted by these workflows.
+
+   To grant human access to the Dev jumpbox without committing a tenant-specific
+   object ID, set the optional `DEV_JUMPBOX_LOGIN_GROUP_ID` variable on the
+   canonical lowercase `dev` GitHub Environment. Azure DevOps supplies the same
+   value through the optional `devJumpboxLoginGroupId` pipeline parameter. Both
+   paths accept empty to skip the assignment and otherwise require a lowercase
+   canonical UUID.
+
+   Azure VNet peering requires non-overlapping address spaces. Confirm the
+   selected environment CIDRs are unused by the ARC runner hub and every other
+   VNet that will be peered to the workloads. The factory validates CIDR syntax,
+   private address space, mutual Dev/Test/Prod non-overlap, subnet containment,
+   and deterministic subnet non-overlap, but it cannot discover external VNet
+   allocations during local generation.
+
+   Update a factory default only after the reviewed project-template change is
+   merged to its main branch. Verify the merge commit, use that main-branch SHA
+   in the generator, validator, and documentation together, and never publish a
+   factory default that points at an unmerged feature-branch SHA.
    Currently, the following pipelines are supported:
    - classical 
 
