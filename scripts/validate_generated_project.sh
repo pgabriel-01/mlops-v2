@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-64c2d4833ed4472912cccd2519410e5012a1edec}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-e9e8d62c3add8af7d6f7c8db7b0d1007d5031b02}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -505,6 +505,8 @@ if ! grep -Fq 'enableManagedOnlineEndpoint bool = true' \
   ! grep -Fq "publicNetworkAccess: enableNetworkIsolation ? 'Disabled' : 'Enabled'" \
     "$project_dir/infrastructure/modules/aml_workspace.bicep" ||
   ! grep -Fq 'allowSharedKeyAccess: false' \
+    "$project_dir/infrastructure/modules/storage_account.bicep" ||
+  ! grep -Fq "minimumTlsVersion: 'TLS1_2'" \
     "$project_dir/infrastructure/modules/storage_account.bicep"; then
   fail "Private managed-online infrastructure or local-auth security changed"
 fi
@@ -528,6 +530,16 @@ if ! grep -Fq "name: 'AADSSHLoginForLinux'" \
   grep -Fq 'enableAutomaticUpgrade:' \
     "$project_dir/infrastructure/modules/bastion.bicep"; then
   fail "Entra SSH extension compatibility regressed"
+fi
+if ! grep -Fq 'def is_desired_private_bastion(' \
+  "$project_dir/mlops/scripts/check_legacy_bastion.py" ||
+  ! grep -Fq 'not is_desired_private_bastion(bastion, expected_name)' \
+    "$project_dir/mlops/scripts/check_legacy_bastion.py" ||
+  ! grep -Fq 'enablePrivateOnlyBastion' \
+    "$project_dir/mlops/scripts/check_legacy_bastion.py" ||
+  ! grep -Fq 'and not has_public_ip' \
+    "$project_dir/mlops/scripts/check_legacy_bastion.py"; then
+  fail "Private Premium Bastion preflight is not idempotent"
 fi
 
 if ! grep -Fq '"batch_compute_name": "imageBuildComputeName"' \
