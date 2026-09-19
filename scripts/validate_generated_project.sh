@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-03722bb414af18628065d28c01424021e567d3e1}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-80beb06c8dce7436f56e4e943dbd2379bb4be820}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -562,8 +562,10 @@ if ! grep -Fq 'workspaceManagedNetworkEnabled: enableVNet' \
 fi
 network_approvers="$project_dir/infrastructure/modules/aml_network_approvers.bicep"
 network_provision="$project_dir/mlops/scripts/provision_workspace_network.py"
+online_deploy="$project_dir/mlops/azureml/deploy/online/deploy.py"
 require_path "infrastructure/modules/aml_network_approvers.bicep"
 require_path "mlops/scripts/provision_workspace_network.py"
+require_path "mlops/azureml/deploy/online/deploy.py"
 if ! grep -Fq "module mlwNetworkApprovers './modules/aml_network_approvers.bicep' = if (enableVNet)" \
   "$project_dir/infrastructure/main.bicep"; then
   fail "Managed-network least-privilege roles or compute dependency regressed"
@@ -571,14 +573,15 @@ fi
 if ! python3 - \
   "$project_dir/infrastructure/main.bicep" \
   "$network_approvers" \
-  "$network_provision" <<'PY'
+  "$network_provision" \
+  "$online_deploy" <<'PY'
 import importlib.util
 import re
 import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
-main_path, approvers_path, provision_path = sys.argv[1:]
+main_path, approvers_path, provision_path, online_deploy_path = sys.argv[1:]
 main = open(main_path, encoding="utf-8").read()
 approvers = open(approvers_path, encoding="utf-8").read()
 
@@ -634,10 +637,17 @@ if command != [
     "az", "ml", "workspace", "provision-network",
     "--resource-group", "rg-demo",
     "--name", "mlw-demo",
-    "--include-spark", "false",
     "--only-show-errors",
 ]:
     raise SystemExit(f"unexpected managed-network provisioning command: {command}")
+if ["--include-spark", "false"] in [
+    command[index : index + 2] for index in range(len(command) - 1)
+]:
+    raise SystemExit("non-Spark provisioning uses split literal-false syntax")
+if any(argument.startswith("--include-spark=") for argument in command):
+    raise SystemExit("non-Spark provisioning uses inline include-spark syntax")
+if "--include-spark" in command:
+    raise SystemExit("non-Spark provisioning must omit the presence-only flag")
 if run.call_args.kwargs.get("timeout") != 900:
     raise SystemExit("managed-network provisioning timeout is not bounded")
 
@@ -671,6 +681,46 @@ if run.call_count != 1 or sleep.called:
 provision_source = open(provision_path, encoding="utf-8").read()
 if 'default=10' not in provision_source or 'default=30' not in provision_source:
     raise SystemExit("managed-network provisioning retry defaults changed")
+for forbidden in ("--include-spark false", "--include-spark=false", "--include-spark"):
+    if forbidden in provision_source:
+        raise SystemExit(f"managed-network provisioner contains forbidden {forbidden!r}")
+
+spec = importlib.util.spec_from_file_location("managed_online_deploy", online_deploy_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("cannot load managed-online deployment validator")
+online = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(online)
+
+def workspace(legacy_mode, *, public_access="Disabled", isolation="AllowOnlyApprovedOutbound"):
+    return SimpleNamespace(
+        public_network_access=public_access,
+        v1_legacy_mode=legacy_mode,
+        managed_network=SimpleNamespace(isolation_mode=isolation),
+    )
+
+for safe_workspace in (
+    workspace(False),
+    workspace(None),
+    {
+        "public_network_access": "Disabled",
+        "managed_network": {"isolation_mode": "AllowOnlyApprovedOutbound"},
+    },
+):
+    online.validate_workspace(safe_workspace)
+
+for unsafe_workspace in (
+    workspace(True),
+    workspace("false"),
+    workspace(0),
+    workspace(False, public_access="Enabled"),
+    workspace(False, isolation="AllowInternetOutbound"),
+):
+    try:
+        online.validate_workspace(unsafe_workspace)
+    except RuntimeError:
+        pass
+    else:
+        raise SystemExit(f"unsafe workspace state was accepted: {unsafe_workspace!r}")
 PY
 then
   fail "Managed-network roles, dependency, or bounded provisioning regressed"
@@ -785,6 +835,12 @@ if [ "$orchestration" = github-actions ]; then
       "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
     ! grep -Fq 'az ml workspace provision-network' \
       "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
+    grep -Fq -- '--include-spark false' \
+      "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
+    grep -Fq -- '--include-spark=false' \
+      "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
+    grep -Fq -- '--include-spark' \
+      "$project_dir/.github/workflows/deploy-online-endpoint.yml" ||
     ! grep -Fq -- '--alternate-deployment-name' \
       "$project_dir/.github/workflows/deploy-online-endpoint.yml"; then
     fail "GitHub batch or managed-online endpoint behavior changed"
@@ -846,6 +902,9 @@ elif [ "$orchestration" = azure-devops ]; then
     "$online_pipeline" ||
     ! grep -Fq 'if [[ -z "${idToken:-}" ]]' "$online_pipeline" ||
     ! grep -Fq 'az ml workspace provision-network' "$online_pipeline" ||
+    grep -Fq -- '--include-spark false' "$online_pipeline" ||
+    grep -Fq -- '--include-spark=false' "$online_pipeline" ||
+    grep -Fq -- '--include-spark' "$online_pipeline" ||
     ! grep -Fq -- "--request-file data/$namespace-request.json" "$online_pipeline"; then
     fail "Azure DevOps online pipeline is not private managed-online with workload identity"
   fi
