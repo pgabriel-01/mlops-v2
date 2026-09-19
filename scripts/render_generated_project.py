@@ -353,7 +353,7 @@ def render_github_workflows(
         online_path,
         "${{ needs.config.outputs.environment_name }}",
         "${{ needs.config.outputs.online_environment_name }}",
-        count=1,
+        count=2,
     )
 
     infrastructure_path = workflow_dir / "deploy-infrastructure.yml"
@@ -664,6 +664,7 @@ def _render_project_in_place(
             online_path,
             "--request-file data/taxi-request.json",
             f"--request-file data/{namespace}-request.json",
+            count=2,
         )
 
 
