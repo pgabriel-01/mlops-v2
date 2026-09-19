@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-60fd56455926b2e1391334cc7b292a84d273b3c4}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-64c2d4833ed4472912cccd2519410e5012a1edec}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -52,6 +52,7 @@ for path in \
   mlops/azureml/deploy/online/requirements.txt \
   mlops/azureml/train/job.yml \
   mlops/scripts/check_legacy_bastion.py \
+  mlops/scripts/check_shared_private_dns.py \
   mlops/scripts/export_config.py \
   mlops/scripts/project_config.py \
   mlops/scripts/render_bicep_parameters.py \
@@ -128,7 +129,50 @@ workload_name = metadata.get("workload_name")
 namespace = metadata.get("workload_namespace")
 environment_names = metadata.get("environment_names")
 environment_vnet_cidrs = metadata.get("environment_vnet_cidrs")
+runner_hub_vnet_resource_ids = metadata.get("runner_hub_vnet_resource_ids")
+shared_private_dns_zone_resource_ids = metadata.get(
+    "shared_private_dns_zone_resource_ids"
+)
 orchestration = metadata.get("orchestration")
+required_private_dns_zones = {
+    "privatelink.blob.core.windows.net",
+    "privatelink.file.core.windows.net",
+    "privatelink.queue.core.windows.net",
+    "privatelink.table.core.windows.net",
+    "privatelink.dfs.core.windows.net",
+    "privatelink.vaultcore.azure.net",
+    "privatelink.azurecr.io",
+    "privatelink.api.azureml.ms",
+    "privatelink.notebooks.azure.net",
+}
+resource_id_pattern = re.compile(
+    r"^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
+    r"Microsoft\.Network/(?P<type>virtualNetworks|privateDnsZones)/(?P<name>[^/]+)$",
+    re.IGNORECASE,
+)
+resource_id_search_pattern = re.compile(
+    r"/subscriptions/[^/\\\"'\s]+/resourceGroups/[^/\\\"'\s]+/providers/"
+    r"Microsoft\.Network/(?:virtualNetworks|privateDnsZones)/[^/\\\"'\s,}]+",
+    re.IGNORECASE,
+)
+
+
+def find_resource_ids(value):
+    if isinstance(value, str):
+        return set(resource_id_search_pattern.findall(value))
+    if isinstance(value, dict):
+        return {
+            resource_id
+            for nested_value in value.values()
+            for resource_id in find_resource_ids(nested_value)
+        }
+    if isinstance(value, list):
+        return {
+            resource_id
+            for nested_value in value
+            for resource_id in find_resource_ids(nested_value)
+        }
+    return set()
 
 if not isinstance(workload_name, str) or not workload_name.strip():
     errors.append("workload_name must be a non-empty string")
@@ -155,6 +199,59 @@ else:
         if normalized in normalized_environment_names:
             errors.append("environment_names collide under GitHub case-insensitive comparison")
         normalized_environment_names.add(normalized)
+if (
+    not isinstance(runner_hub_vnet_resource_ids, dict)
+    or set(runner_hub_vnet_resource_ids) != {"dev", "test", "prod"}
+):
+    errors.append("runner_hub_vnet_resource_ids must map dev/test/prod to strings")
+if (
+    not isinstance(shared_private_dns_zone_resource_ids, dict)
+    or set(shared_private_dns_zone_resource_ids) != {"dev", "test", "prod"}
+):
+    errors.append(
+        "shared_private_dns_zone_resource_ids must map dev/test/prod to JSON objects"
+    )
+elif isinstance(runner_hub_vnet_resource_ids, dict):
+    for environment in ("dev", "test", "prod"):
+        runner_hub_id = runner_hub_vnet_resource_ids.get(environment)
+        zone_mapping = shared_private_dns_zone_resource_ids.get(environment)
+        if not isinstance(runner_hub_id, str):
+            errors.append(f"{environment} runner hub VNet resource ID must be a string")
+            continue
+        if runner_hub_id:
+            match = resource_id_pattern.fullmatch(runner_hub_id)
+            if not match or match.group("type").casefold() != "virtualnetworks":
+                errors.append(f"{environment} runner hub VNet resource ID is invalid")
+        if not isinstance(zone_mapping, dict):
+            errors.append(f"{environment} shared private DNS zone map must be an object")
+            continue
+        if zone_mapping and not runner_hub_id:
+            errors.append(f"{environment} shared zones require a runner hub VNet ID")
+        for zone_name, zone_id in zone_mapping.items():
+            match = (
+                resource_id_pattern.fullmatch(zone_id)
+                if isinstance(zone_id, str)
+                else None
+            )
+            if zone_name not in required_private_dns_zones:
+                errors.append(f"{environment} has unsupported shared zone {zone_name!r}")
+            elif (
+                not match
+                or match.group("type").casefold() != "privatednszones"
+                or match.group("name").casefold() != zone_name.casefold()
+            ):
+                errors.append(
+                    f"{environment} shared zone {zone_name!r} has an invalid resource ID"
+                )
+metadata_without_network_ids = dict(metadata)
+metadata_without_network_ids.pop("runner_hub_vnet_resource_ids", None)
+metadata_without_network_ids.pop("shared_private_dns_zone_resource_ids", None)
+unexpected_metadata_resource_ids = find_resource_ids(metadata_without_network_ids)
+if unexpected_metadata_resource_ids:
+    errors.append(
+        "provenance contains Azure network resource IDs outside the approved fields: "
+        + ", ".join(sorted(unexpected_metadata_resource_ids))
+    )
 
 network_cidrs = {}
 environment_networks = {}
@@ -215,7 +312,8 @@ if not errors:
     for environment in ("dev", "test", "prod"):
         config_path = project_dir / f"config-infra-{environment}.yml"
         config = {}
-        for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+        config_content = config_path.read_text(encoding="utf-8")
+        for raw_line in config_content.splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or ":" not in line:
                 continue
@@ -234,6 +332,12 @@ if not errors:
             "private_network": "true",
             "enable_managed_online_endpoint": "true",
             "online_mlflow_no_code": "true",
+            "runner_hub_vnet_resource_id": runner_hub_vnet_resource_ids[environment],
+            "shared_private_dns_zone_resource_ids": json.dumps(
+                shared_private_dns_zone_resource_ids[environment],
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
         }
         if environment in network_cidrs:
             expected_values.update(network_cidrs[environment])
@@ -242,6 +346,22 @@ if not errors:
                 errors.append(
                     f"{config_path.name} {key} must be {expected!r}, got {config.get(key)!r}"
                 )
+        expected_resource_ids = find_resource_ids(
+            {
+                "runner_hub_vnet_resource_id": runner_hub_vnet_resource_ids[
+                    environment
+                ],
+                "shared_private_dns_zone_resource_ids": (
+                    shared_private_dns_zone_resource_ids[environment]
+                ),
+            }
+        )
+        actual_resource_ids = find_resource_ids(config_content)
+        if actual_resource_ids != expected_resource_ids:
+            errors.append(
+                f"{config_path.name} contains Azure network resource IDs outside "
+                "the approved runner hub and shared-zone fields"
+            )
         expected_jumpbox = "true" if environment == "dev" else "false"
         if config.get("enable_dev_jumpbox") != expected_jumpbox:
             errors.append(
@@ -302,7 +422,10 @@ if grep -R -I -E -q \
   -e 'secrets\.AZURE_CREDENTIALS' \
   -e 'client[_-]?secret[[:space:]]*[:=]' \
   -e '/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/' \
-  "$project_dir" --exclude-dir=.git; then
+  "$project_dir" \
+  --exclude-dir=.git \
+  --exclude='.mlops-generation.json' \
+  --exclude='config-infra-*.yml'; then
   fail "Credential-shaped values or live Azure resource IDs remain"
 fi
 
@@ -398,6 +521,14 @@ if ! grep -Fq "param enableDevJumpbox bool = env == 'dev'" \
     "$project_dir/infrastructure/main.bicep"; then
   fail "Dev-only jumpbox or immutable tool/image versions changed"
 fi
+if ! grep -Fq "name: 'AADSSHLoginForLinux'" \
+  "$project_dir/infrastructure/modules/bastion.bicep" ||
+  ! grep -Fq 'autoUpgradeMinorVersion: true' \
+    "$project_dir/infrastructure/modules/bastion.bicep" ||
+  grep -Fq 'enableAutomaticUpgrade:' \
+    "$project_dir/infrastructure/modules/bastion.bicep"; then
+  fail "Entra SSH extension compatibility regressed"
+fi
 
 if ! grep -Fq '"batch_compute_name": "imageBuildComputeName"' \
   "$project_dir/mlops/scripts/render_bicep_parameters.py" ||
@@ -410,11 +541,15 @@ fi
 
 if ! grep -Fq 'DEV_JUMPBOX_LOGIN_GROUP_ID' \
   "$project_dir/mlops/scripts/render_bicep_parameters.py" ||
-  ! grep -Fq 'uuid.UUID(dev_jumpbox_login_group_id)' \
+  ! grep -Fq 'canonical_uuid.fullmatch(login_group_object_id)' \
     "$project_dir/mlops/scripts/render_bicep_parameters.py" ||
-  ! grep -Fq 'canonical_group_id != dev_jumpbox_login_group_id' \
+  ! grep -Fq 'DEV_JUMPBOX_LOGIN_GROUP_ID must be empty or a lowercase canonical UUID' \
     "$project_dir/mlops/scripts/render_bicep_parameters.py"; then
   fail "Dev jumpbox login group runtime override is missing canonical UUID validation"
+fi
+if ! grep -Fq 'AZURE_PRINCIPAL_OBJECT_ID must be a lowercase canonical UUID' \
+  "$project_dir/mlops/scripts/render_bicep_parameters.py"; then
+  fail "CI principal object ID is not validated as a lowercase canonical UUID"
 fi
 
 if ! grep -Fq "var keyVaultPrefix = take(replace(toLower(prefix), '-', ''), 5)" \
@@ -493,6 +628,10 @@ if [ "$orchestration" = github-actions ]; then
     "$project_dir/.github/workflows/deploy-infrastructure.yml")" -ne 2 ]; then
     fail "GitHub infrastructure validation and deployment must pass the jumpbox login group variable"
   fi
+  if [ "$(grep -F -c 'python3 mlops/scripts/check_shared_private_dns.py' \
+    "$project_dir/.github/workflows/deploy-infrastructure.yml")" -ne 2 ]; then
+    fail "GitHub infrastructure validation and deployment must preflight runner hub DNS"
+  fi
 
   if ! grep -Fq "request_batch_file: data/$namespace-batch.csv" \
     "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
@@ -541,8 +680,15 @@ elif [ "$orchestration" = azure-devops ]; then
     ! grep -Fq 'infrastructure/parameters.json' "$infrastructure_pipeline" ||
     ! grep -Fq 'condition: and(succeeded(), eq(' "$infrastructure_pipeline" ||
     ! grep -Fq 'name: devJumpboxLoginGroupId' "$infrastructure_pipeline" ||
+    ! grep -Fq 'name: azurePrincipalObjectId' "$infrastructure_pipeline" ||
     [ "$(grep -F -c 'DEV_JUMPBOX_LOGIN_GROUP_ID: ${{ parameters.devJumpboxLoginGroupId }}' \
       "$infrastructure_pipeline")" -ne 2 ] ||
+    [ "$(grep -F -c 'AZURE_PRINCIPAL_OBJECT_ID: ${{ parameters.azurePrincipalObjectId }}' \
+      "$infrastructure_pipeline")" -ne 2 ] ||
+    [ "$(grep -F -c 'check_shared_private_dns.py' \
+      "$infrastructure_pipeline")" -ne 2 ] ||
+    grep -Fq 'az ad sp show' "$infrastructure_pipeline" ||
+    grep -Fq "pool='\${{ parameters.privateAgentPool }}'" "$infrastructure_pipeline" ||
     grep -Fq 'vmImage:' "$infrastructure_pipeline"; then
     fail "Azure DevOps infrastructure pipeline is not private, gated, and workload-identity based"
   fi

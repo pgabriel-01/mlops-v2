@@ -9,12 +9,21 @@ workload_namespace=${workload_namespace:-}   #lowercase Azure-safe workload name
 dev_vnet_cidr=${dev_vnet_cidr:-}   #non-overlapping private Dev workload VNet CIDR
 test_vnet_cidr=${test_vnet_cidr:-}   #non-overlapping private Test workload VNet CIDR
 prod_vnet_cidr=${prod_vnet_cidr:-}   #non-overlapping private Prod workload VNet CIDR
+dev_runner_hub_vnet_resource_id=${dev_runner_hub_vnet_resource_id:-}
+test_runner_hub_vnet_resource_id=${test_runner_hub_vnet_resource_id:-}
+prod_runner_hub_vnet_resource_id=${prod_runner_hub_vnet_resource_id:-}
+dev_shared_private_dns_zone_resource_ids=${dev_shared_private_dns_zone_resource_ids:-}
+test_shared_private_dns_zone_resource_ids=${test_shared_private_dns_zone_resource_ids:-}
+prod_shared_private_dns_zone_resource_ids=${prod_shared_private_dns_zone_resource_ids:-}
+dev_shared_private_dns_zone_resource_ids=${dev_shared_private_dns_zone_resource_ids:-'{}'}
+test_shared_private_dns_zone_resource_ids=${test_shared_private_dns_zone_resource_ids:-'{}'}
+prod_shared_private_dns_zone_resource_ids=${prod_shared_private_dns_zone_resource_ids:-'{}'}
 dev_environment_name=${dev_environment_name:-Dev}
 test_environment_name=${test_environment_name:-Test}
 prod_environment_name=${prod_environment_name:-Prod}
 github_org_name=${github_org_name:-orgname}   #replace with your github org name
 project_template_github_url=${project_template_github_url:-https://github.com/pgabriel-01/mlops-project-template}   #replace with the url for the project template for your organization, or use the validated default
-project_template_git_ref=${project_template_git_ref:-60fd56455926b2e1391334cc7b292a84d273b3c4}   #branch, tag, or immutable commit SHA
+project_template_git_ref=${project_template_git_ref:-64c2d4833ed4472912cccd2519410e5012a1edec}   #branch, tag, or immutable commit SHA
 mlops_templates_repository=${mlops_templates_repository:-pgabriel-01/mlops-templates}   #owner/repository used by reusable GitHub workflows
 mlops_templates_git_ref=${mlops_templates_git_ref:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}   #use an immutable commit SHA for repeatable generation
 create_github_repository=${create_github_repository:-true}   #set to false for local generation and validation
@@ -192,6 +201,15 @@ if [ "$customize_managed_online" = true ]; then
     --dev-vnet-cidr "$dev_vnet_cidr" \
     --test-vnet-cidr "$test_vnet_cidr" \
     --prod-vnet-cidr "$prod_vnet_cidr" \
+    --dev-runner-hub-vnet-resource-id "$dev_runner_hub_vnet_resource_id" \
+    --test-runner-hub-vnet-resource-id "$test_runner_hub_vnet_resource_id" \
+    --prod-runner-hub-vnet-resource-id "$prod_runner_hub_vnet_resource_id" \
+    --dev-shared-private-dns-zone-resource-ids \
+      "$dev_shared_private_dns_zone_resource_ids" \
+    --test-shared-private-dns-zone-resource-ids \
+      "$test_shared_private_dns_zone_resource_ids" \
+    --prod-shared-private-dns-zone-resource-ids \
+      "$prod_shared_private_dns_zone_resource_ids" \
     --orchestration "$orchestration" \
     --ado-infrastructure-pipeline \
       "$generator_root/templates/azure-devops/deploy-infrastructure-pipeline.yml"
@@ -211,6 +229,12 @@ python3 - \
   "$dev_vnet_cidr" \
   "$test_vnet_cidr" \
   "$prod_vnet_cidr" \
+  "$dev_runner_hub_vnet_resource_id" \
+  "$test_runner_hub_vnet_resource_id" \
+  "$prod_runner_hub_vnet_resource_id" \
+  "$dev_shared_private_dns_zone_resource_ids" \
+  "$test_shared_private_dns_zone_resource_ids" \
+  "$prod_shared_private_dns_zone_resource_ids" \
   "$infrastructure_version" \
   "$project_type" \
   "$mlops_version" \
@@ -234,6 +258,12 @@ from pathlib import Path
     dev_vnet_cidr,
     test_vnet_cidr,
     prod_vnet_cidr,
+    dev_runner_hub_vnet_resource_id,
+    test_runner_hub_vnet_resource_id,
+    prod_runner_hub_vnet_resource_id,
+    dev_shared_private_dns_zone_resource_ids,
+    test_shared_private_dns_zone_resource_ids,
+    prod_shared_private_dns_zone_resource_ids,
     infrastructure_version,
     project_type,
     mlops_version,
@@ -269,6 +299,16 @@ if customize == "true":
             "dev": dev_vnet_cidr,
             "test": test_vnet_cidr,
             "prod": prod_vnet_cidr,
+        },
+        "runner_hub_vnet_resource_ids": {
+            "dev": dev_runner_hub_vnet_resource_id,
+            "test": test_runner_hub_vnet_resource_id,
+            "prod": prod_runner_hub_vnet_resource_id,
+        },
+        "shared_private_dns_zone_resource_ids": {
+            "dev": json.loads(dev_shared_private_dns_zone_resource_ids),
+            "test": json.loads(test_shared_private_dns_zone_resource_ids),
+            "prod": json.loads(prod_shared_private_dns_zone_resource_ids),
         },
         **payload,
     }

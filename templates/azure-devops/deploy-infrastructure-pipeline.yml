@@ -25,6 +25,10 @@ parameters:
     displayName: Workload identity service connection
     type: string
     default: REQUIRED_WORKLOAD_IDENTITY_SERVICE_CONNECTION
+  - name: azurePrincipalObjectId
+    displayName: Workload identity service principal object ID
+    type: string
+    default: REQUIRED_LOWERCASE_CANONICAL_SERVICE_PRINCIPAL_OBJECT_ID
   - name: devJumpboxLoginGroupId
     displayName: Optional Dev jumpbox login group object ID
     type: string
@@ -43,8 +47,7 @@ stages:
           - checkout: self
           - bash: |
               set -euo pipefail
-              pool='${{ parameters.privateAgentPool }}'
-              case "$pool" in
+              case "$PRIVATE_AGENT_POOL" in
                 REQUIRED_PRIVATE_SELF_HOSTED_POOL|Azure\ Pipelines|Default)
                   echo "A named private self-hosted Linux agent pool is required." >&2
                   exit 2
@@ -54,10 +57,13 @@ stages:
                 "config-infra-${{ parameters.environment }}.yml" \
                 --azure-devops
             displayName: Validate private pool and load configuration
+            env:
+              PRIVATE_AGENT_POOL: ${{ parameters.privateAgentPool }}
           - task: AzureCLI@2
             displayName: Validate Bicep deployment
             env:
               DEV_JUMPBOX_LOGIN_GROUP_ID: ${{ parameters.devJumpboxLoginGroupId }}
+              AZURE_PRINCIPAL_OBJECT_ID: ${{ parameters.azurePrincipalObjectId }}
             inputs:
               azureSubscription: ${{ parameters.azureServiceConnection }}
               scriptType: bash
@@ -69,16 +75,8 @@ stages:
                   echo "The Azure service connection must use workload identity federation." >&2
                   exit 2
                 fi
-                sp_object_id="$(
-                  az ad sp show \
-                    --id "$servicePrincipalId" \
-                    --query id \
-                    --output tsv
-                )"
-                [[ -n "$sp_object_id" ]] || {
-                  echo "Unable to resolve the workload identity service principal object ID." >&2
-                  exit 2
-                }
+                python3 mlops/scripts/check_shared_private_dns.py \
+                  "config-infra-${{ parameters.environment }}.yml"
                 if [[ "$(enable_dev_jumpbox)" == "true" ]]; then
                   base_name="$(resource_group)"
                   base_name="${base_name#rg-}"
@@ -91,10 +89,9 @@ stages:
                     --only-show-errors \
                     --output none
                 fi
-                AZURE_PRINCIPAL_OBJECT_ID="$sp_object_id" \
-                  python3 mlops/scripts/render_bicep_parameters.py \
-                    "config-infra-${{ parameters.environment }}.yml" \
-                    infrastructure/parameters.json
+                python3 mlops/scripts/render_bicep_parameters.py \
+                  "config-infra-${{ parameters.environment }}.yml" \
+                  infrastructure/parameters.json
                 az bicep build --file infrastructure/main.bicep
                 az deployment sub validate \
                   --name "mlops-validate-$(Build.BuildId)" \
@@ -120,8 +117,7 @@ stages:
                 - checkout: self
                 - bash: |
                     set -euo pipefail
-                    pool='${{ parameters.privateAgentPool }}'
-                    case "$pool" in
+                    case "$PRIVATE_AGENT_POOL" in
                       REQUIRED_PRIVATE_SELF_HOSTED_POOL|Azure\ Pipelines|Default)
                         echo "A named private self-hosted Linux agent pool is required." >&2
                         exit 2
@@ -131,10 +127,13 @@ stages:
                       "config-infra-${{ parameters.environment }}.yml" \
                       --azure-devops
                   displayName: Validate private pool and load configuration
+                  env:
+                    PRIVATE_AGENT_POOL: ${{ parameters.privateAgentPool }}
                 - task: AzureCLI@2
                   displayName: Deploy Bicep
                   env:
                     DEV_JUMPBOX_LOGIN_GROUP_ID: ${{ parameters.devJumpboxLoginGroupId }}
+                    AZURE_PRINCIPAL_OBJECT_ID: ${{ parameters.azurePrincipalObjectId }}
                   inputs:
                     azureSubscription: ${{ parameters.azureServiceConnection }}
                     scriptType: bash
@@ -146,16 +145,8 @@ stages:
                         echo "The Azure service connection must use workload identity federation." >&2
                         exit 2
                       fi
-                      sp_object_id="$(
-                        az ad sp show \
-                          --id "$servicePrincipalId" \
-                          --query id \
-                          --output tsv
-                      )"
-                      [[ -n "$sp_object_id" ]] || {
-                        echo "Unable to resolve the workload identity service principal object ID." >&2
-                        exit 2
-                      }
+                      python3 mlops/scripts/check_shared_private_dns.py \
+                        "config-infra-${{ parameters.environment }}.yml"
                       if [[ "$(enable_dev_jumpbox)" == "true" ]]; then
                         base_name="$(resource_group)"
                         base_name="${base_name#rg-}"
@@ -163,10 +154,9 @@ stages:
                           --resource-group "$(resource_group)" \
                           --base-name "$base_name"
                       fi
-                      AZURE_PRINCIPAL_OBJECT_ID="$sp_object_id" \
-                        python3 mlops/scripts/render_bicep_parameters.py \
-                          "config-infra-${{ parameters.environment }}.yml" \
-                          infrastructure/parameters.json
+                      python3 mlops/scripts/render_bicep_parameters.py \
+                        "config-infra-${{ parameters.environment }}.yml" \
+                        infrastructure/parameters.json
                       az deployment sub create \
                         --name "mlops-${{ parameters.environment }}-$(Build.BuildId)" \
                         --location "$(location)" \

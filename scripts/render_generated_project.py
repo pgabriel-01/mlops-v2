@@ -6,11 +6,28 @@ import argparse
 import ipaddress
 import json
 import re
+import shutil
+import tempfile
 import unicodedata
 from pathlib import Path
 
-
 ENVIRONMENTS = ("dev", "test", "prod")
+REQUIRED_PRIVATE_DNS_ZONES = {
+    "privatelink.blob.core.windows.net",
+    "privatelink.file.core.windows.net",
+    "privatelink.queue.core.windows.net",
+    "privatelink.table.core.windows.net",
+    "privatelink.dfs.core.windows.net",
+    "privatelink.vaultcore.azure.net",
+    "privatelink.azurecr.io",
+    "privatelink.api.azureml.ms",
+    "privatelink.notebooks.azure.net",
+}
+AZURE_RESOURCE_ID_PATTERN = re.compile(
+    r"^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/"
+    r"Microsoft\.Network/(?P<type>virtualNetworks|privateDnsZones)/(?P<name>[^/]+)$",
+    re.IGNORECASE,
+)
 RFC1918_NETWORKS = tuple(
     ipaddress.ip_network(value)
     for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
@@ -43,6 +60,43 @@ def bicep_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def parse_shared_zone_mapping(value: str) -> dict[str, str]:
+    try:
+        mapping = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"shared private DNS zone map is not valid JSON: {exc}") from exc
+    if not isinstance(mapping, dict):
+        raise ValueError("shared private DNS zone map must be a JSON object")
+    for zone_name, resource_id in mapping.items():
+        match = (
+            AZURE_RESOURCE_ID_PATTERN.fullmatch(resource_id)
+            if isinstance(resource_id, str)
+            else None
+        )
+        if zone_name not in REQUIRED_PRIVATE_DNS_ZONES:
+            raise ValueError(f"unsupported shared private DNS zone: {zone_name!r}")
+        if (
+            not match
+            or match.group("type").casefold() != "privatednszones"
+            or match.group("name").casefold() != zone_name.casefold()
+        ):
+            raise ValueError(f"invalid shared private DNS zone mapping for {zone_name}")
+    return mapping
+
+
+def validate_dns_configuration(
+    runner_hub_vnet_resource_id: str, shared_zone_mapping: dict[str, str]
+) -> None:
+    if runner_hub_vnet_resource_id:
+        match = AZURE_RESOURCE_ID_PATTERN.fullmatch(runner_hub_vnet_resource_id)
+        if not match or match.group("type").casefold() != "virtualnetworks":
+            raise ValueError("runner hub VNet resource ID is invalid")
+    elif shared_zone_mapping:
+        raise ValueError(
+            "shared private DNS zone IDs require runner_hub_vnet_resource_id"
+        )
+
+
 def render_config(
     project_dir: Path,
     environment: str,
@@ -50,6 +104,8 @@ def render_config(
     workload_name: str,
     namespace: str,
     network_cidrs: dict[str, str],
+    runner_hub_vnet_resource_id: str,
+    shared_private_dns_zone_resource_ids: dict[str, str],
 ) -> None:
     path = project_dir / f"config-infra-{environment}.yml"
     replace_exact(
@@ -71,6 +127,31 @@ def render_config(
     )
     if count != 1:
         raise SystemExit(f"{path}: expected exactly one namespace setting")
+    path.write_text(updated, encoding="utf-8")
+    content = path.read_text(encoding="utf-8")
+    updated, count = re.subn(
+        r'^runner_hub_vnet_resource_id:\s*.*$',
+        f"runner_hub_vnet_resource_id: {yaml_string(runner_hub_vnet_resource_id)}",
+        content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if count != 1:
+        raise SystemExit(f"{path}: expected one runner hub VNet setting")
+    path.write_text(updated, encoding="utf-8")
+    shared_zones_json = json.dumps(
+        shared_private_dns_zone_resource_ids, separators=(",", ":"), sort_keys=True
+    )
+    content = path.read_text(encoding="utf-8")
+    updated, count = re.subn(
+        r'^shared_private_dns_zone_resource_ids:\s*.*$',
+        f"shared_private_dns_zone_resource_ids: {yaml_string(shared_zones_json)}",
+        content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if count != 1:
+        raise SystemExit(f"{path}: expected one shared private DNS zone map")
     path.write_text(updated, encoding="utf-8")
     replacements = {
         "vnet_address_prefix": network_cidrs["vnet"],
@@ -304,17 +385,6 @@ def render_github_workflows(
         "    environment: ${{ needs.config.outputs.environment_name }}\n",
         count=2,
     )
-    replace_exact(
-        infrastructure_path,
-        "          AZURE_PRINCIPAL_OBJECT_ID: ${{ vars.AZURE_PRINCIPAL_OBJECT_ID }}\n",
-        (
-            "          AZURE_PRINCIPAL_OBJECT_ID: ${{ vars.AZURE_PRINCIPAL_OBJECT_ID }}\n"
-            "          DEV_JUMPBOX_LOGIN_GROUP_ID: "
-            "${{ vars.DEV_JUMPBOX_LOGIN_GROUP_ID }}\n"
-        ),
-        count=2,
-    )
-
     for path in workflow_specs:
         workflow_path = workflow_dir / path
         content = workflow_path.read_text(encoding="utf-8")
@@ -329,21 +399,148 @@ def render_project(
     namespace: str,
     environment_names: dict[str, str],
     environment_vnet_cidrs: dict[str, str],
+    runner_hub_vnet_resource_ids: dict[str, str],
+    shared_private_dns_zone_resource_ids: dict[str, dict[str, str]],
     orchestration: str,
     ado_pipeline: Path,
 ) -> None:
-    networks = {
-        environment: ipaddress.ip_network(value, strict=True)
-        for environment, value in environment_vnet_cidrs.items()
+    validate_environment_networks(environment_vnet_cidrs)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{project_dir.name}-render-", dir=project_dir.parent
+    ) as temporary_directory:
+        staged_project = Path(temporary_directory) / project_dir.name
+        shutil.copytree(
+            project_dir,
+            staged_project,
+            copy_function=shutil.copy2,
+            ignore=shutil.ignore_patterns(".git"),
+        )
+        _render_project_in_place(
+            staged_project,
+            workload_name,
+            namespace,
+            environment_names,
+            environment_vnet_cidrs,
+            runner_hub_vnet_resource_ids,
+            shared_private_dns_zone_resource_ids,
+            orchestration,
+            ado_pipeline,
+        )
+        synchronize_project(staged_project, project_dir)
+
+
+def project_files(root: Path) -> dict[Path, Path]:
+    return {
+        path.relative_to(root): path
+        for path in root.rglob("*")
+        if path.is_file() and ".git" not in path.relative_to(root).parts
     }
+
+
+def _atomic_copy(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{destination.name}.",
+        dir=destination.parent,
+        delete=False,
+    ) as temporary_file:
+        temporary_path = Path(temporary_file.name)
+    try:
+        shutil.copy2(source, temporary_path)
+        temporary_path.replace(destination)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def synchronize_project(
+    staged_project: Path,
+    project_dir: Path,
+    write_file=_atomic_copy,
+) -> None:
+    original_files = project_files(project_dir)
+    staged_files = project_files(staged_project)
+    changed_paths = sorted(
+        relative_path
+        for relative_path, staged_path in staged_files.items()
+        if relative_path not in original_files
+        or staged_path.read_bytes() != original_files[relative_path].read_bytes()
+        or staged_path.stat().st_mode != original_files[relative_path].stat().st_mode
+    )
+    deleted_paths = sorted(set(original_files) - set(staged_files))
+    affected_paths = changed_paths + deleted_paths
+    if not affected_paths:
+        return
+
+    with tempfile.TemporaryDirectory(
+        prefix=f".{project_dir.name}-backup-", dir=project_dir.parent
+    ) as backup_directory:
+        backup_root = Path(backup_directory)
+        for relative_path in affected_paths:
+            original_path = original_files.get(relative_path)
+            if original_path is not None:
+                backup_path = backup_root / relative_path
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(original_path, backup_path)
+
+        created_directories = []
+        try:
+            for relative_path in changed_paths:
+                destination = project_dir / relative_path
+                missing_parents = []
+                parent = destination.parent
+                while parent != project_dir and not parent.exists():
+                    missing_parents.append(parent)
+                    parent = parent.parent
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                created_directories.extend(reversed(missing_parents))
+                write_file(staged_files[relative_path], destination)
+            for relative_path in deleted_paths:
+                (project_dir / relative_path).unlink()
+        except Exception:
+            for relative_path in affected_paths:
+                destination = project_dir / relative_path
+                backup_path = backup_root / relative_path
+                if backup_path.is_file():
+                    _atomic_copy(backup_path, destination)
+                else:
+                    destination.unlink(missing_ok=True)
+            for directory in reversed(created_directories):
+                try:
+                    directory.rmdir()
+                except OSError:
+                    pass
+            raise
+
+
+def validate_environment_networks(
+    environment_vnet_cidrs: dict[str, str],
+) -> None:
+    networks = {}
+    for environment in ENVIRONMENTS:
+        value = environment_vnet_cidrs[environment]
+        derive_network_cidrs(value)
+        networks[environment] = ipaddress.ip_network(value, strict=True)
     for index, environment in enumerate(ENVIRONMENTS):
         for other_environment in ENVIRONMENTS[index + 1 :]:
-            if networks[environment].overlaps(networks[other_environment]):
-                raise SystemExit(
-                    "workload VNet CIDRs must not overlap: "
-                    f"{environment}={networks[environment]} and "
-                    f"{other_environment}={networks[other_environment]}"
-                )
+                if networks[environment].overlaps(networks[other_environment]):
+                    raise SystemExit(
+                        "workload VNet CIDRs must not overlap: "
+                        f"{environment}={networks[environment]} and "
+                        f"{other_environment}={networks[other_environment]}"
+                    )
+
+
+def _render_project_in_place(
+    project_dir: Path,
+    workload_name: str,
+    namespace: str,
+    environment_names: dict[str, str],
+    environment_vnet_cidrs: dict[str, str],
+    runner_hub_vnet_resource_ids: dict[str, str],
+    shared_private_dns_zone_resource_ids: dict[str, dict[str, str]],
+    orchestration: str,
+    ado_pipeline: Path,
+) -> None:
     for environment in ENVIRONMENTS:
         network_cidrs = derive_network_cidrs(environment_vnet_cidrs[environment])
         render_config(
@@ -353,6 +550,8 @@ def render_project(
             workload_name,
             namespace,
             network_cidrs,
+            runner_hub_vnet_resource_ids[environment],
+            shared_private_dns_zone_resource_ids[environment],
         )
 
     bicep_path = project_dir / "infrastructure" / "main.bicep"
@@ -373,36 +572,29 @@ def render_project(
         '    "location": "location",\n',
         '    "location": "location",\n    "workload_name": "workloadDisplayName",\n',
     )
-    replace_exact(renderer_path, "import os\n", "import os\nimport uuid\n")
     replace_exact(
         renderer_path,
         (
-            "    parameters = {\n"
-            "        parameter: {\"value\": config[key]} for key, parameter in PARAMETER_MAP.items()\n"
-            "    }\n"
+            "    canonical_uuid = re.compile(\n"
+            '        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",\n'
+            "        re.IGNORECASE,\n"
+            "    )\n"
         ),
         (
-            "    parameters = {\n"
-            "        parameter: {\"value\": config[key]} for key, parameter in PARAMETER_MAP.items()\n"
-            "    }\n"
-            "    dev_jumpbox_login_group_id = os.getenv(\n"
-            '        "DEV_JUMPBOX_LOGIN_GROUP_ID", ""\n'
-            "    ).strip()\n"
-            "    if dev_jumpbox_login_group_id:\n"
-            "        try:\n"
-            "            canonical_group_id = str(uuid.UUID(dev_jumpbox_login_group_id))\n"
-            "        except ValueError as exc:\n"
-            "            raise SystemExit(\n"
-            '                "DEV_JUMPBOX_LOGIN_GROUP_ID must be a canonical UUID"\n'
-            "            ) from exc\n"
-            "        if canonical_group_id != dev_jumpbox_login_group_id:\n"
-            "            raise SystemExit(\n"
-            '                "DEV_JUMPBOX_LOGIN_GROUP_ID must be a lowercase canonical UUID"\n'
-            "            )\n"
-            '        parameters["devJumpboxLoginGroupId"] = {\n'
-            '            "value": dev_jumpbox_login_group_id\n'
-            "        }\n"
+            "    canonical_uuid = re.compile(\n"
+            '        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"\n'
+            "    )\n"
         ),
+    )
+    replace_exact(
+        renderer_path,
+        "AZURE_PRINCIPAL_OBJECT_ID must be a canonical UUID",
+        "AZURE_PRINCIPAL_OBJECT_ID must be a lowercase canonical UUID",
+    )
+    replace_exact(
+        renderer_path,
+        "DEV_JUMPBOX_LOGIN_GROUP_ID must be empty or a canonical UUID",
+        "DEV_JUMPBOX_LOGIN_GROUP_ID must be empty or a lowercase canonical UUID",
     )
 
     validator_path = project_dir / "mlops" / "scripts" / "validate_project.py"
@@ -486,6 +678,18 @@ def main() -> None:
     parser.add_argument("--dev-vnet-cidr", required=True)
     parser.add_argument("--test-vnet-cidr", required=True)
     parser.add_argument("--prod-vnet-cidr", required=True)
+    parser.add_argument("--dev-runner-hub-vnet-resource-id", default="")
+    parser.add_argument("--test-runner-hub-vnet-resource-id", default="")
+    parser.add_argument("--prod-runner-hub-vnet-resource-id", default="")
+    parser.add_argument(
+        "--dev-shared-private-dns-zone-resource-ids", default="{}"
+    )
+    parser.add_argument(
+        "--test-shared-private-dns-zone-resource-ids", default="{}"
+    )
+    parser.add_argument(
+        "--prod-shared-private-dns-zone-resource-ids", default="{}"
+    )
     parser.add_argument(
         "--orchestration",
         choices=("github-actions", "azure-devops"),
@@ -506,12 +710,34 @@ def main() -> None:
         "test": args.test_vnet_cidr,
         "prod": args.prod_vnet_cidr,
     }
+    runner_hub_vnet_resource_ids = {
+        "dev": args.dev_runner_hub_vnet_resource_id,
+        "test": args.test_runner_hub_vnet_resource_id,
+        "prod": args.prod_runner_hub_vnet_resource_id,
+    }
+    shared_private_dns_zone_resource_ids = {}
+    for environment in ENVIRONMENTS:
+        try:
+            mapping = parse_shared_zone_mapping(
+                getattr(
+                    args,
+                    f"{environment}_shared_private_dns_zone_resource_ids",
+                )
+            )
+            validate_dns_configuration(
+                runner_hub_vnet_resource_ids[environment], mapping
+            )
+        except ValueError as exc:
+            raise SystemExit(f"{environment}: {exc}") from exc
+        shared_private_dns_zone_resource_ids[environment] = mapping
     render_project(
         args.project_dir.resolve(),
         args.workload_name,
         args.namespace,
         environment_names,
         environment_vnet_cidrs,
+        runner_hub_vnet_resource_ids,
+        shared_private_dns_zone_resource_ids,
         args.orchestration,
         args.ado_infrastructure_pipeline.resolve(),
     )
