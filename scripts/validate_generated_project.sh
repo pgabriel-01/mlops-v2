@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-e9e8d62c3add8af7d6f7c8db7b0d1007d5031b02}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-4a3c43c7cdeb1238184b632e1074340f345f7792}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -549,6 +549,16 @@ if ! grep -Fq '"batch_compute_name": "imageBuildComputeName"' \
   ! grep -Fq 'computeClusterName: imageBuildComputeName' \
     "$project_dir/infrastructure/main.bicep"; then
   fail "Workspace imageBuildCompute and batch compute naming diverged"
+fi
+if ! grep -Fq 'workspaceManagedNetworkEnabled: enableVNet' \
+  "$project_dir/infrastructure/main.bicep" ||
+  ! grep -Fq "var effectiveSubnetId = workspaceManagedNetworkEnabled ? '' : subnetId" \
+    "$project_dir/infrastructure/modules/aml_computecluster.bicep" ||
+  ! grep -Fq 'enableNodePublicIp: workspaceManagedNetworkEnabled ? false : empty(effectiveSubnetId)' \
+    "$project_dir/infrastructure/modules/aml_computecluster.bicep" ||
+  ! grep -Fq '}, !empty(effectiveSubnetId) ? {' \
+    "$project_dir/infrastructure/modules/aml_computecluster.bicep"; then
+  fail "Managed-network AML compute subnet or public-IP behavior regressed"
 fi
 
 if ! grep -Fq 'DEV_JUMPBOX_LOGIN_GROUP_ID' \
