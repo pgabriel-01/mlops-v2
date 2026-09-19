@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-76c65a7d95894c38bc98da833b1e230aa2aa2291}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-e3b1025cf06c42c5a39e0d367f3892d5d111f006}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -577,11 +577,12 @@ if ! python3 - \
   "$online_deploy" <<'PY'
 import importlib.util
 import io
+import inspect
 import json
 import re
 import sys
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 main_path, approvers_path, provision_path, online_deploy_path = sys.argv[1:]
 main = open(main_path, encoding="utf-8").read()
@@ -803,6 +804,60 @@ for required in (
 ):
     if required not in online_source:
         raise SystemExit("SDK omission is not wired to authoritative ARM validation")
+
+class MissingModelError(Exception):
+    pass
+
+models = SimpleNamespace(get=MagicMock(return_value=SimpleNamespace()))
+client = SimpleNamespace(models=models)
+online.validate_model_exists(
+    client,
+    "taxi-model",
+    "2",
+    "mlw-taxifare-dev",
+    MissingModelError,
+)
+models.get.assert_called_once_with(name="taxi-model", version="2")
+
+models.get.side_effect = MissingModelError("404")
+try:
+    online.validate_model_exists(
+        client,
+        "taxi-model",
+        "2",
+        "mlw-taxifare-dev",
+        MissingModelError,
+    )
+except RuntimeError as error:
+    diagnostic = str(error)
+    if (
+        "Model 'taxi-model:2'" not in diagnostic
+        or "workspace 'mlw-taxifare-dev'" not in diagnostic
+        or "Register this exact model version" not in diagnostic
+    ):
+        raise SystemExit("missing-model diagnostic is not actionable") from error
+else:
+    raise SystemExit("missing model did not fail before online deployment")
+
+models.get.side_effect = PermissionError("forbidden")
+try:
+    online.validate_model_exists(
+        client,
+        "taxi-model",
+        "2",
+        "mlw-taxifare-dev",
+        MissingModelError,
+    )
+except PermissionError:
+    pass
+else:
+    raise SystemExit("model preflight swallowed a permission or service error")
+
+deploy_source = inspect.getsource(online.deploy)
+if deploy_source.index("validate_model_exists(") > deploy_source.index(
+    "with endpoint_deployment_lock("
+):
+    raise SystemExit("model existence is not validated before endpoint mutation")
 PY
 then
   fail "Managed-network roles, dependency, or bounded provisioning regressed"
