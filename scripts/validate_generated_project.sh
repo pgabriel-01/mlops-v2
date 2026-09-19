@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-80beb06c8dce7436f56e4e943dbd2379bb4be820}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-e3b1025cf06c42c5a39e0d367f3892d5d111f006}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -576,10 +576,13 @@ if ! python3 - \
   "$network_provision" \
   "$online_deploy" <<'PY'
 import importlib.util
+import io
+import inspect
+import json
 import re
 import sys
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 main_path, approvers_path, provision_path, online_deploy_path = sys.argv[1:]
 main = open(main_path, encoding="utf-8").read()
@@ -698,15 +701,18 @@ def workspace(legacy_mode, *, public_access="Disabled", isolation="AllowOnlyAppr
         managed_network=SimpleNamespace(isolation_mode=isolation),
     )
 
-for safe_workspace in (
-    workspace(False),
+online.validate_workspace(workspace(False))
+online.validate_workspace(
     workspace(None),
+    authoritative_v1_legacy_mode=False,
+)
+online.validate_workspace(
     {
         "public_network_access": "Disabled",
         "managed_network": {"isolation_mode": "AllowOnlyApprovedOutbound"},
     },
-):
-    online.validate_workspace(safe_workspace)
+    authoritative_v1_legacy_mode=False,
+)
 
 for unsafe_workspace in (
     workspace(True),
@@ -721,6 +727,137 @@ for unsafe_workspace in (
         pass
     else:
         raise SystemExit(f"unsafe workspace state was accepted: {unsafe_workspace!r}")
+
+for authoritative_value in (None, True, "false", 0):
+    try:
+        online.validate_workspace(
+            workspace(None),
+            authoritative_v1_legacy_mode=authoritative_value,
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise SystemExit(
+            "SDK omission accepted unsafe authoritative ARM value: "
+            f"{authoritative_value!r}"
+        )
+
+credential = SimpleNamespace(
+    get_token=lambda _: SimpleNamespace(token="test-token")
+)
+for arm_value in (False, True, None, "false", 0):
+    response = io.BytesIO(
+        json.dumps({"properties": {"v1LegacyMode": arm_value}}).encode()
+    )
+    with patch.object(
+        online.urllib.request,
+        "urlopen",
+        return_value=response,
+    ) as urlopen:
+        actual = online.read_workspace_v1_legacy_mode(
+            credential,
+            "subscription/id",
+            "resource group",
+            "workspace/name",
+        )
+    if type(actual) is not type(arm_value) or actual != arm_value:
+        raise SystemExit("authoritative ARM legacy-mode value changed during read")
+    request = urlopen.call_args.args[0]
+    if not request.full_url.startswith(
+        "https://management.azure.com/subscriptions/subscription%2Fid/"
+    ):
+        raise SystemExit("authoritative ARM read does not use the fixed management host")
+    if "/resourceGroups/resource%20group/" not in request.full_url:
+        raise SystemExit("ARM resource group is not URL quoted")
+    if "/workspaces/workspace%2Fname?" not in request.full_url:
+        raise SystemExit("ARM workspace name is not URL quoted")
+    if urlopen.call_args.kwargs.get("timeout") != 30:
+        raise SystemExit("authoritative ARM read timeout is not bounded")
+
+for failure in (
+    OSError("ARM unavailable"),
+    ValueError("invalid JSON"),
+):
+    with patch.object(
+        online.urllib.request,
+        "urlopen",
+        side_effect=failure,
+    ):
+        try:
+            online.read_workspace_v1_legacy_mode(
+                credential,
+                "subscription",
+                "resource-group",
+                "workspace",
+            )
+        except RuntimeError as error:
+            if "authoritative Azure ML workspace ARM state" not in str(error):
+                raise
+        else:
+            raise SystemExit("authoritative ARM read failure did not fail closed")
+
+online_source = open(online_deploy_path, encoding="utf-8").read()
+for required in (
+    "if sdk_v1_legacy_mode is None:",
+    "authoritative_v1_legacy_mode = read_workspace_v1_legacy_mode(",
+    "validate_workspace(workspace, authoritative_v1_legacy_mode)",
+):
+    if required not in online_source:
+        raise SystemExit("SDK omission is not wired to authoritative ARM validation")
+
+class MissingModelError(Exception):
+    pass
+
+models = SimpleNamespace(get=MagicMock(return_value=SimpleNamespace()))
+client = SimpleNamespace(models=models)
+online.validate_model_exists(
+    client,
+    "taxi-model",
+    "2",
+    "mlw-taxifare-dev",
+    MissingModelError,
+)
+models.get.assert_called_once_with(name="taxi-model", version="2")
+
+models.get.side_effect = MissingModelError("404")
+try:
+    online.validate_model_exists(
+        client,
+        "taxi-model",
+        "2",
+        "mlw-taxifare-dev",
+        MissingModelError,
+    )
+except RuntimeError as error:
+    diagnostic = str(error)
+    if (
+        "Model 'taxi-model:2'" not in diagnostic
+        or "workspace 'mlw-taxifare-dev'" not in diagnostic
+        or "Register this exact model version" not in diagnostic
+    ):
+        raise SystemExit("missing-model diagnostic is not actionable") from error
+else:
+    raise SystemExit("missing model did not fail before online deployment")
+
+models.get.side_effect = PermissionError("forbidden")
+try:
+    online.validate_model_exists(
+        client,
+        "taxi-model",
+        "2",
+        "mlw-taxifare-dev",
+        MissingModelError,
+    )
+except PermissionError:
+    pass
+else:
+    raise SystemExit("model preflight swallowed a permission or service error")
+
+deploy_source = inspect.getsource(online.deploy)
+if deploy_source.index("validate_model_exists(") > deploy_source.index(
+    "with endpoint_deployment_lock("
+):
+    raise SystemExit("model existence is not validated before endpoint mutation")
 PY
 then
   fail "Managed-network roles, dependency, or bounded provisioning regressed"
