@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-e3b1025cf06c42c5a39e0d367f3892d5d111f006}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-52f7784699980b05952b15cdac1a27b587f84e74}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -858,6 +858,98 @@ if deploy_source.index("validate_model_exists(") > deploy_source.index(
     "with endpoint_deployment_lock("
 ):
     raise SystemExit("model existence is not validated before endpoint mutation")
+
+for required in (
+    'choices=("deploy", "finalize", "full")',
+    'PENDING_FINGERPRINT_TAG = "pending-deployment-fingerprint"',
+    'if args.phase in ("deploy", "full"):',
+    "deploy_candidate_under_lock(",
+    'if args.phase in ("finalize", "full"):',
+    "finalize_candidate_under_lock(",
+):
+    if required not in online_source:
+        raise SystemExit("online deploy/finalize phase contract regressed")
+if deploy_source.index("deploy_candidate_under_lock(") > deploy_source.index(
+    "finalize_candidate_under_lock("
+):
+    raise SystemExit("online finalization is ordered before candidate deployment")
+
+finalize_source = inspect.getsource(online.finalize_candidate_under_lock)
+required_finalize_fragments = (
+    "lease.ensure_held()",
+    "deployed_candidate_name(",
+    "PENDING_FINGERPRINT_TAG",
+    "client.online_endpoints.invoke(",
+    "live_endpoint.traffic = promoted_traffic(",
+    "live_endpoint.tags.pop(PENDING_FINGERPRINT_TAG, None)",
+)
+if any(fragment not in finalize_source for fragment in required_finalize_fragments):
+    raise SystemExit("fresh-auth finalization lost lease, fingerprint, invoke, or traffic guards")
+if finalize_source.count("lease.ensure_held()") < 2:
+    raise SystemExit("online finalization does not recheck the lease before traffic promotion")
+if finalize_source.count("PENDING_FINGERPRINT_TAG") < 3:
+    raise SystemExit("online finalization does not guard stale fingerprints throughout")
+if not (
+    finalize_source.index("deployed_candidate_name(")
+    < finalize_source.index("client.online_endpoints.invoke(")
+    < finalize_source.index("live_endpoint.traffic = promoted_traffic(")
+):
+    raise SystemExit("online fingerprint validation, invoke, and traffic ordering regressed")
+
+class DeploymentNotFoundError(Exception):
+    pass
+
+def deployment(name, fingerprint):
+    return SimpleNamespace(
+        name=name,
+        tags={online.DEPLOYMENT_FINGERPRINT_TAG: fingerprint},
+    )
+
+deployments = SimpleNamespace(
+    get=MagicMock(
+        side_effect=[
+            deployment("blue", "desired"),
+            deployment("green", "other"),
+        ]
+    )
+)
+candidate = online.deployed_candidate_name(
+    SimpleNamespace(online_deployments=deployments),
+    SimpleNamespace(
+        deployment_name="blue",
+        alternate_deployment_name="green",
+        endpoint_name="endpoint",
+    ),
+    "desired",
+    DeploymentNotFoundError,
+)
+if candidate != "blue":
+    raise SystemExit("fresh finalizer did not resolve the exact fingerprint candidate")
+
+for matches in ([], ["blue", "green"]):
+    side_effect = [
+        deployment(name, "desired" if name in matches else "other")
+        for name in ("blue", "green")
+    ]
+    try:
+        online.deployed_candidate_name(
+            SimpleNamespace(
+                online_deployments=SimpleNamespace(
+                    get=MagicMock(side_effect=side_effect)
+                )
+            ),
+            SimpleNamespace(
+                deployment_name="blue",
+                alternate_deployment_name="green",
+                endpoint_name="endpoint",
+            ),
+            "desired",
+            DeploymentNotFoundError,
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise SystemExit("fresh finalizer accepted zero or multiple fingerprint matches")
 PY
 then
   fail "Managed-network roles, dependency, or bounded provisioning regressed"
@@ -982,6 +1074,25 @@ if [ "$orchestration" = github-actions ]; then
       "$project_dir/.github/workflows/deploy-online-endpoint.yml"; then
     fail "GitHub batch or managed-online endpoint behavior changed"
   fi
+  online_workflow="$project_dir/.github/workflows/deploy-online-endpoint.yml"
+  if [ "$(grep -F -c 'uses: azure/login@' "$online_workflow")" -ne 2 ] ||
+    [ "$(grep -F -c -- '--phase deploy' "$online_workflow")" -ne 1 ] ||
+    [ "$(grep -F -c -- '--phase finalize' "$online_workflow")" -ne 1 ] ||
+    ! python3 - "$online_workflow" <<'PY'
+import sys
+
+content = open(sys.argv[1], encoding="utf-8").read()
+deploy = content.index("--phase deploy")
+fresh_login = content.index(
+    "- name: Refresh Azure OIDC login before private invocation"
+)
+finalize = content.index("--phase finalize")
+if not deploy < fresh_login < finalize:
+    raise SystemExit("GitHub fresh OIDC boundary is not between deploy and finalize")
+PY
+  then
+    fail "GitHub online deployment lacks a fresh-auth finalization boundary"
+  fi
 
   expected_workflow_source="$expected_mlops_templates_repository/.github/workflows/python-sdk-v2-"
   workflow_source_count=$(grep -R -I -F -h "uses: $expected_workflow_source" \
@@ -1044,6 +1155,26 @@ elif [ "$orchestration" = azure-devops ]; then
     grep -Fq -- '--include-spark' "$online_pipeline" ||
     ! grep -Fq -- "--request-file data/$namespace-request.json" "$online_pipeline"; then
     fail "Azure DevOps online pipeline is not private managed-online with workload identity"
+  fi
+  if [ "$(grep -F -c 'task: AzureCLI@2' "$online_pipeline")" -ne 2 ] ||
+    [ "$(grep -F -c 'addSpnToEnvironment: true' "$online_pipeline")" -ne 2 ] ||
+    [ "$(grep -F -c -- '--phase deploy' "$online_pipeline")" -ne 1 ] ||
+    [ "$(grep -F -c -- '--phase finalize' "$online_pipeline")" -ne 1 ] ||
+    [ "$(grep -F -c 'if [[ -z "${idToken:-}" ]]' "$online_pipeline")" -ne 2 ] ||
+    ! python3 - "$online_pipeline" <<'PY'
+import sys
+
+content = open(sys.argv[1], encoding="utf-8").read()
+deploy = content.index("--phase deploy")
+fresh_task = content.index(
+    "displayName: Invoke candidate and promote traffic with fresh OIDC login"
+)
+finalize = content.index("--phase finalize")
+if not deploy < fresh_task < finalize:
+    raise SystemExit("Azure DevOps fresh OIDC task is not between deploy and finalize")
+PY
+  then
+    fail "Azure DevOps online deployment lacks a fresh-auth finalization boundary"
   fi
 fi
 
