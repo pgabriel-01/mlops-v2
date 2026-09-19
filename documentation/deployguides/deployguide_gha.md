@@ -80,6 +80,12 @@ If using WSL, complete all setup within the Unix environment:
    * **mlops_version** selects your preferred interaction approach with Azure Machine Learning
    * **git_folder_location** points to the root project directory to which you cloned mlops-v2 in step 3
    * **project_name** is the name (case sensitive) of your project. A  GitHub repository will be created with this name
+   * **workload_name** is the human-readable workload display name used in workflow titles, tags, and Azure ML job metadata.
+   * **workload_namespace** is the lowercase Azure-safe namespace used for resource names, experiment names, and sample data paths.
+   * **dev_vnet_cidr**, **test_vnet_cidr**, and **prod_vnet_cidr** are explicit private, mutually non-overlapping workload VNet address spaces. The generator derives each environment's default, compute, private-endpoint, Bastion, and administration subnets and fails if a CIDR is malformed, too small, or overlaps another generated environment.
+   * **dev_runner_hub_vnet_resource_id**, **test_runner_hub_vnet_resource_id**, and **prod_runner_hub_vnet_resource_id** optionally identify the private runner hub VNet used by each environment.
+   * **dev_shared_private_dns_zone_resource_ids**, **test_shared_private_dns_zone_resource_ids**, and **prod_shared_private_dns_zone_resource_ids** are JSON objects keyed by authoritative private DNS zone namespace. Supply every required zone already linked to the corresponding runner hub. Generation rejects malformed or mismatched resource IDs, and the infrastructure pipeline fails closed if a configured zone is not the zone linked to the hub or an existing hub-linked namespace is omitted.
+   * **dev_environment_name**, **test_environment_name**, and **prod_environment_name** are human-facing workflow input labels. GitHub Environment objects are case-insensitive and cannot be renamed, but the OIDC `sub` claim preserves the exact casing used by the workflow `environment:` value. Federated-identity credential subjects must therefore match these generated labels exactly. Configuration filenames and Azure suffixes remain lowercase `dev`, `test`, and `prod`.
    * **github_org_name** is your GitHub organization (or GitHub username)
    * **project_template_github_url** is the URL to the original or your generated clone of the mlops_project_template repository from step 1
    * **project_template_git_ref** is the branch, tag, or commit to fetch. Use an immutable commit SHA for repeatable validation.
@@ -105,6 +111,19 @@ If using WSL, complete all setup within the Unix environment:
       
       #replace with your project name
       project_name=taxi-fare-regression   
+
+      #workload identity; these values are explicit generator inputs
+      workload_name='Taxi Fare Prediction'
+      workload_namespace=taxifare
+      #example only: verify all three ranges are unused in your network estate
+      dev_vnet_cidr=10.242.0.0/16
+      test_vnet_cidr=10.243.0.0/16
+      prod_vnet_cidr=10.244.0.0/16
+      dev_runner_hub_vnet_resource_id='/subscriptions/<subscription-id>/resourceGroups/<hub-resource-group>/providers/Microsoft.Network/virtualNetworks/<hub-vnet>'
+      dev_shared_private_dns_zone_resource_ids='{"privatelink.blob.core.windows.net":"/subscriptions/<subscription-id>/resourceGroups/<dns-resource-group>/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"}'
+      dev_environment_name=Dev
+      test_environment_name=Test
+      prod_environment_name=Prod
       
       #replace with your github org name
       github_org_name=<orgname>
@@ -113,7 +132,7 @@ If using WSL, complete all setup within the Unix environment:
       project_template_github_url=https://github.com/pgabriel-01/mlops-project-template
 
       #use an immutable commit SHA for repeatable generation
-      project_template_git_ref=4e394feb04c19d8d79f1040205f36f7166ca4a71
+      project_template_git_ref=64c2d4833ed4472912cccd2519410e5012a1edec
 
       #pin reusable workflow calls to an immutable commit
       mlops_templates_repository=pgabriel-01/mlops-templates
@@ -125,6 +144,37 @@ If using WSL, complete all setup within the Unix environment:
       #options: github-actions / azure-devops
       orchestration=github-actions 
    ```
+   The generated Taxi Fare Prediction project intentionally retains the
+   registered model asset name `taxi-model`, preserving the proven batch and
+   online deployment contract while the workload namespace controls the other
+   machine-owned identifiers.
+
+   The title-cased workflow choices do not create parallel GitHub Environment
+   objects. Selecting `Dev` resolves to the canonical `dev` Environment object,
+   but the workflow's OIDC assertion ends in `:environment:Dev`. Entra subject
+   comparison is case-sensitive, so provision federated credentials ending in
+   `:environment:Dev`, `:environment:Test`, and `:environment:Prod` for the
+   default labels. A lowercase compatibility credential may coexist, but it does
+   not replace the exact title-case subject emitted by these workflows.
+
+   To grant human access to the Dev jumpbox without committing a tenant-specific
+   object ID, set the optional `DEV_JUMPBOX_LOGIN_GROUP_ID` variable on the
+   configured Dev GitHub Environment (`Dev` by default). Azure DevOps supplies the same
+   value through the optional `devJumpboxLoginGroupId` pipeline parameter. Both
+   paths accept empty to skip the assignment and otherwise require a lowercase
+   canonical UUID.
+
+   Azure VNet peering requires non-overlapping address spaces. Confirm the
+   selected environment CIDRs are unused by the ARC runner hub and every other
+   VNet that will be peered to the workloads. The factory validates CIDR syntax,
+   private address space, mutual Dev/Test/Prod non-overlap, subnet containment,
+   and deterministic subnet non-overlap, but it cannot discover external VNet
+   allocations during local generation.
+
+   Update a factory default only after the reviewed project-template change is
+   merged to its main branch. Verify the merge commit, use that main-branch SHA
+   in the generator, validator, and documentation together, and never publish a
+   factory default that points at an unmerged feature-branch SHA.
    Currently, the following pipelines are supported:
    - classical 
 
@@ -220,44 +270,58 @@ If using WSL, complete all setup within the Unix environment:
 
    **Step 5.4: Configure Federated Identity Credentials**
 
-   Create a federated credential for each GitHub Environment used by the project.
-   The issuer and audience must match GitHub Actions OIDC exactly.
-
-   For the **dev** environment:
-   ```bash
-   az ad app federated-credential create --id <app_id> --parameters '{
-     "name": "github-environment-dev",
-     "issuer": "https://token.actions.githubusercontent.com",
-     "subject": "repo:<github_org>/<repo_name>:environment:dev",
-     "audiences": ["api://AzureADTokenExchange"],
-     "description": "GitHub Actions dev environment"
-   }'
-   ```
-
-   Repeat for `test` and `prod`, changing both the credential name and subject:
+   Create a federated credential for each configured GitHub Environment. Do not
+   construct a legacy name-based `repo:<owner>/<repository>` subject. First
+   verify that the repository uses immutable owner and repository IDs in its
+   OIDC subject template, then retrieve the live IDs and append the exact
+   generated Environment label:
 
    ```bash
-   az ad app federated-credential create --id <app_id> --parameters '{
-     "name": "github-environment-test",
-     "issuer": "https://token.actions.githubusercontent.com",
-     "subject": "repo:<github_org>/<repo_name>:environment:test",
-     "audiences": ["api://AzureADTokenExchange"],
-     "description": "GitHub Actions test environment"
-   }'
+   repository=<github_org>/<repo_name>
+   expected_claim_keys='repository_owner_id,repository_id,environment'
+   actual_claim_keys="$(
+     gh api "repos/$repository/actions/oidc/customization/sub" \
+       --jq 'if .use_default then "default" else (.include_claim_keys | join(",")) end'
+   )"
+   test "$actual_claim_keys" = "$expected_claim_keys" || {
+     echo "Repository OIDC subject template must be: $expected_claim_keys" >&2
+     exit 1
+   }
 
-   az ad app federated-credential create --id <app_id> --parameters '{
-     "name": "github-environment-prod",
-     "issuer": "https://token.actions.githubusercontent.com",
-     "subject": "repo:<github_org>/<repo_name>:environment:prod",
-     "audiences": ["api://AzureADTokenExchange"],
-     "description": "GitHub Actions prod environment"
-   }'
+   repository_owner_id="$(gh api "repos/$repository" --jq '.owner.id')"
+   repository_id="$(gh api "repos/$repository" --jq '.id')"
+   subject_prefix="repository_owner_id:${repository_owner_id}:repository_id:${repository_id}"
+
+   for environment_label in Dev Test Prod; do
+     credential_name="github-environment-$(printf '%s' "$environment_label" | tr '[:upper:]' '[:lower:]')"
+     subject="${subject_prefix}:environment:${environment_label}"
+     parameters="$(
+       jq -nc \
+         --arg name "$credential_name" \
+         --arg subject "$subject" \
+         --arg description "GitHub Actions ${environment_label} environment" \
+         '{
+           name: $name,
+           issuer: "https://token.actions.githubusercontent.com",
+           subject: $subject,
+           audiences: ["api://AzureADTokenExchange"],
+           description: $description
+         }'
+     )"
+     az ad app federated-credential create \
+       --id <app_id> \
+       --parameters "$parameters"
+   done
    ```
+
+   Replace `Dev`, `Test`, and `Prod` in the loop when using custom generator
+   labels. Entra compares the complete subject case-sensitively.
 
    **Step 5.5: Add GitHub Environment Secrets and Variables**
 
-   Create GitHub Environments named `dev`, `test`, and `prod`. Configure each
-   environment separately so its OIDC subject and settings remain isolated.
+   Create GitHub Environments using the exact configured labels (`Dev`, `Test`,
+   and `Prod` by default). Configure each environment separately so its OIDC
+   subject and settings remain isolated.
 
    Add the following three environment secrets:
 
@@ -472,6 +536,28 @@ workload-to-hub peering and links its private DNS zones to that VNet. The
 owner must create the reciprocal peering separately. Set it to `true` only when
 the workload deployment identity has approved write access to the hub VNet scope
 and this deployment is the single owner of that peering.
+
+When a runner hub is already linked to an authoritative private DNS zone, supply
+that exact zone ID in the environment's
+`shared_private_dns_zone_resource_ids` map. The required namespaces are:
+
+- `privatelink.blob.core.windows.net`
+- `privatelink.file.core.windows.net`
+- `privatelink.queue.core.windows.net`
+- `privatelink.table.core.windows.net`
+- `privatelink.dfs.core.windows.net`
+- `privatelink.vaultcore.azure.net`
+- `privatelink.azurecr.io`
+- `privatelink.api.azureml.ms`
+- `privatelink.notebooks.azure.net`
+
+Azure permits only one same-namespace private DNS zone link per VNet. Before ARM
+validation or deployment, the generated pipeline enumerates the zones linked to
+the runner hub and fails if an existing required namespace is omitted, points to
+a different zone ID, or a configured shared zone is not already linked to the
+hub. Explicitly shared zones are reused and linked only to the workload VNet;
+zones not already owned by the hub remain deployment-owned and are linked to
+both VNets.
 
 Reusable factory and project-template assets must not contain tenant IDs,
 subscription IDs, repository names, VNet IDs, or other live environment values.
