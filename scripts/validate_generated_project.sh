@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 project_dir=${1:-}
 expected_project_template_url=${EXPECTED_PROJECT_TEMPLATE_URL:-https://github.com/pgabriel-01/mlops-project-template}
-expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-4a3c43c7cdeb1238184b632e1074340f345f7792}
+expected_project_template_ref=${EXPECTED_PROJECT_TEMPLATE_REF:-03722bb414af18628065d28c01424021e567d3e1}
 expected_mlops_templates_repository=${EXPECTED_MLOPS_TEMPLATES_REPOSITORY:-pgabriel-01/mlops-templates}
 expected_mlops_templates_ref=${EXPECTED_MLOPS_TEMPLATES_REF:-70b7ce23a9cb905b528fc4cbc1a375eabf893a0c}
 
@@ -560,6 +560,121 @@ if ! grep -Fq 'workspaceManagedNetworkEnabled: enableVNet' \
     "$project_dir/infrastructure/modules/aml_computecluster.bicep"; then
   fail "Managed-network AML compute subnet or public-IP behavior regressed"
 fi
+network_approvers="$project_dir/infrastructure/modules/aml_network_approvers.bicep"
+network_provision="$project_dir/mlops/scripts/provision_workspace_network.py"
+require_path "infrastructure/modules/aml_network_approvers.bicep"
+require_path "mlops/scripts/provision_workspace_network.py"
+if ! grep -Fq "module mlwNetworkApprovers './modules/aml_network_approvers.bicep' = if (enableVNet)" \
+  "$project_dir/infrastructure/main.bicep"; then
+  fail "Managed-network least-privilege roles or compute dependency regressed"
+fi
+if ! python3 - \
+  "$project_dir/infrastructure/main.bicep" \
+  "$network_approvers" \
+  "$network_provision" <<'PY'
+import importlib.util
+import re
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
+
+main_path, approvers_path, provision_path = sys.argv[1:]
+main = open(main_path, encoding="utf-8").read()
+approvers = open(approvers_path, encoding="utf-8").read()
+
+compute_match = re.search(
+    r"(?ms)^module mlwcc\b.*?(?=^module |\Z)",
+    main,
+)
+if not compute_match or not re.search(
+    r"dependsOn:\s*\[\s*mlwNetworkApprovers\s+peMlw\s*\]",
+    compute_match.group(),
+):
+    raise SystemExit("AML compute does not explicitly depend on network approver roles")
+
+resource_pattern = re.compile(
+    r"(?ms)^resource (?P<name>\w+) "
+    r"'Microsoft\.Authorization/roleAssignments@2022-04-01' "
+    r"= (?:if \(hasContainerRegistry\) )?\{\n"
+    r"(?P<body>.*?)(?=^resource |^output |\Z)"
+)
+resources = {match.group("name"): match.group("body") for match in resource_pattern.finditer(approvers)}
+expected = {
+    "storageApprover": ("scope: storageAccount", "roleDefinitionId: networkConnectionApproverRoleId"),
+    "keyVaultApprover": ("scope: keyVault", "roleDefinitionId: networkConnectionApproverRoleId"),
+    "containerRegistryApprover": (
+        "scope: containerRegistry",
+        "roleDefinitionId: networkConnectionApproverRoleId",
+    ),
+    "containerRegistryReader": (
+        "scope: containerRegistry",
+        "'acdd72a7-3385-48ef-bd42-f606fba81ae7' // Reader",
+    ),
+    "workspaceApprover": ("scope: workspace", "roleDefinitionId: networkConnectionApproverRoleId"),
+}
+if set(resources) != set(expected):
+    raise SystemExit(f"unexpected managed-network role assignments: {sorted(resources)}")
+for name, required in expected.items():
+    if any(token not in resources[name] for token in required):
+        raise SystemExit(f"{name} does not use the required exact scope and role")
+if "b556d68e-0be0-4f35-a333-ad7ee1ce17ea" not in approvers:
+    raise SystemExit("network connection approver role ID is missing")
+
+spec = importlib.util.spec_from_file_location("provision_workspace_network", provision_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("cannot load managed-network provisioner")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+success = SimpleNamespace(returncode=0, stdout="", stderr="")
+with patch.object(module.subprocess, "run", return_value=success) as run:
+    module.provision_network("rg-demo", "mlw-demo", attempts=1, interval_seconds=0)
+command = run.call_args.args[0]
+if command != [
+    "az", "ml", "workspace", "provision-network",
+    "--resource-group", "rg-demo",
+    "--name", "mlw-demo",
+    "--include-spark", "false",
+    "--only-show-errors",
+]:
+    raise SystemExit(f"unexpected managed-network provisioning command: {command}")
+if run.call_args.kwargs.get("timeout") != 900:
+    raise SystemExit("managed-network provisioning timeout is not bounded")
+
+transient = SimpleNamespace(
+    returncode=1,
+    stdout="",
+    stderr="Permissions were recently granted",
+)
+with (
+    patch.object(module.subprocess, "run", side_effect=[transient, success]) as run,
+    patch.object(module.time, "sleep") as sleep,
+):
+    module.provision_network("rg-demo", "mlw-demo", attempts=2, interval_seconds=30)
+if run.call_count != 2 or sleep.call_args.args != (30,):
+    raise SystemExit("authorization propagation retry behavior regressed")
+
+permanent = SimpleNamespace(returncode=1, stdout="", stderr="invalid request")
+with (
+    patch.object(module.subprocess, "run", return_value=permanent) as run,
+    patch.object(module.time, "sleep") as sleep,
+):
+    try:
+        module.provision_network("rg-demo", "mlw-demo", attempts=10, interval_seconds=30)
+    except RuntimeError:
+        pass
+    else:
+        raise SystemExit("permanent provisioning errors must fail closed")
+if run.call_count != 1 or sleep.called:
+    raise SystemExit("permanent provisioning errors must not be retried")
+
+provision_source = open(provision_path, encoding="utf-8").read()
+if 'default=10' not in provision_source or 'default=30' not in provision_source:
+    raise SystemExit("managed-network provisioning retry defaults changed")
+PY
+then
+  fail "Managed-network roles, dependency, or bounded provisioning regressed"
+fi
 
 if ! grep -Fq 'DEV_JUMPBOX_LOGIN_GROUP_ID' \
   "$project_dir/mlops/scripts/render_bicep_parameters.py" ||
@@ -654,6 +769,15 @@ if [ "$orchestration" = github-actions ]; then
     "$project_dir/.github/workflows/deploy-infrastructure.yml")" -ne 2 ]; then
     fail "GitHub infrastructure validation and deployment must preflight runner hub DNS"
   fi
+  infrastructure_workflow="$project_dir/.github/workflows/deploy-infrastructure.yml"
+  if ! grep -Fq 'enableComputeCluster=false' "$infrastructure_workflow" ||
+    ! grep -Fq 'python3 mlops/scripts/provision_workspace_network.py' "$infrastructure_workflow" ||
+    ! grep -Fq -- '--resource-group "${{ needs.config.outputs.resource_group }}"' "$infrastructure_workflow" ||
+    ! grep -Fq -- '--workspace-name "${{ needs.config.outputs.workspace_name }}"' "$infrastructure_workflow" ||
+    [ "$(grep -F -c "needs.config.outputs.enable_vnet == 'true' && needs.config.outputs.enable_compute_cluster == 'true'" \
+      "$infrastructure_workflow")" -ne 2 ]; then
+    fail "GitHub infrastructure deployment lacks bounded managed-network provisioning"
+  fi
 
   if ! grep -Fq "request_batch_file: data/$namespace-batch.csv" \
     "$project_dir/.github/workflows/deploy-batch-endpoint.yml" ||
@@ -709,6 +833,10 @@ elif [ "$orchestration" = azure-devops ]; then
       "$infrastructure_pipeline")" -ne 2 ] ||
     [ "$(grep -F -c 'check_shared_private_dns.py' \
       "$infrastructure_pipeline")" -ne 2 ] ||
+    ! grep -Fq 'enableComputeCluster=false' "$infrastructure_pipeline" ||
+    ! grep -Fq 'python3 mlops/scripts/provision_workspace_network.py' "$infrastructure_pipeline" ||
+    ! grep -Fq -- '--resource-group "$(resource_group)"' "$infrastructure_pipeline" ||
+    ! grep -Fq -- '--workspace-name "$(workspace_name)"' "$infrastructure_pipeline" ||
     grep -Fq 'az ad sp show' "$infrastructure_pipeline" ||
     grep -Fq "pool='\${{ parameters.privateAgentPool }}'" "$infrastructure_pipeline" ||
     grep -Fq 'vmImage:' "$infrastructure_pipeline"; then
